@@ -8,6 +8,15 @@ const MIN_SIDEBAR = 280
 const MAX_SIDEBAR = 620
 const MIN_WEBCAM = 120
 
+// STUN for direct connections + free public TURN relays so peers on different
+// networks (behind NAT) can still exchange media when a direct path fails.
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+]
+
 const RoomPage = () => {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -36,7 +45,9 @@ const RoomPage = () => {
   // Refs
   const localVideoRef = useRef(null)
   const remoteVideoRefs = useRef(new Map())
-  const peerConnections = useRef(new Map())
+  const peers = useRef(new Map()) // peerId -> { pc, makingOffer, polite, pendingCandidates }
+  const localStreamRef = useRef(null)
+  const participantsRef = useRef([])
   const sidebarBodyRef = useRef(null)
 
   useEffect(() => {
@@ -84,6 +95,10 @@ const RoomPage = () => {
       localVideoRef.current.play().catch(e => console.log('Local video play error:', e))
     }
   }, [localStream, webcamsOpen, sidebarOpen])
+
+  // Keep a ref of participants so WebRTC handlers (bound once) always see the
+  // current list rather than a stale closure value.
+  useEffect(() => { participantsRef.current = participants }, [participants])
 
   const handleWebSocketMessage = (data) => {
     switch (data.type) {
@@ -140,8 +155,8 @@ const RoomPage = () => {
     if (!leftName) return
     setParticipants(prev => prev.filter(p => p.username !== leftName))
     // Tear down any peer connection / remote tile for the departing user
-    const pc = peerConnections.current.get(leftName)
-    if (pc) { pc.close(); peerConnections.current.delete(leftName) }
+    const entry = peers.current.get(leftName)
+    if (entry) { entry.pc.close(); peers.current.delete(leftName) }
     setRemoteStreams(prev => {
       if (!prev.has(leftName)) return prev
       const next = new Map(prev)
@@ -151,127 +166,164 @@ const RoomPage = () => {
   }
 
   const handleCallStarted = (data) => {
-    if (data.username !== username) {
-      setParticipants(prev =>
-        prev.map(p => p.username === data.username
-          ? { ...p, isSharing: true, mediaType: data.media || 'camera' }
-          : p)
-      )
-      const pc = createPeerConnection(data.username, localStream)
-      if (localStream) {
-        pc.createOffer().then(offer => {
-          pc.setLocalDescription(offer)
-          websocketManager.send('webrtc-offer', { to: data.username, from: username, offer, roomId: id })
-        }).catch(error => console.error('Error creating offer for', data.username, ':', error))
-      }
-    }
+    if (!data || data.username === username) return
+    setParticipants(prev =>
+      prev.map(p => p.username === data.username
+        ? { ...p, isSharing: true, mediaType: data.media || 'camera' }
+        : p)
+    )
+    // Ensure a peer connection exists so we can receive their media. If we're
+    // already sharing, ensurePeer adds our tracks and negotiation kicks off;
+    // perfect negotiation resolves any glare with their offer.
+    ensurePeer(data.username)
   }
 
   const handleCallEnded = (data) => {
-    if (data.username !== username) {
-      setParticipants(prev =>
-        prev.map(p => p.username === data.username ? { ...p, isSharing: false, mediaType: null } : p)
-      )
-      const pc = peerConnections.current.get(data.username)
-      if (pc) { pc.close(); peerConnections.current.delete(data.username) }
-      setRemoteStreams(prev => {
-        if (!prev.has(data.username)) return prev
-        const next = new Map(prev)
-        next.delete(data.username)
-        return next
-      })
-    }
+    if (!data || data.username === username) return
+    setParticipants(prev =>
+      prev.map(p => p.username === data.username ? { ...p, isSharing: false, mediaType: null } : p)
+    )
+    const entry = peers.current.get(data.username)
+    if (entry) { entry.pc.close(); peers.current.delete(data.username) }
+    setRemoteStreams(prev => {
+      if (!prev.has(data.username)) return prev
+      const next = new Map(prev)
+      next.delete(data.username)
+      return next
+    })
   }
 
   const handleWebRTCOffer = async (data) => {
-    const { from, offer, roomId: offerRoomId } = data
+    const { from, to, offer, roomId: offerRoomId } = data
     if (offerRoomId !== id) return
     if (!from || from === username) return // ignore our own echoed offer
+    if (to && to !== username) return      // not addressed to us
+    const entry = ensurePeer(from)
+    const pc = entry.pc
+    // Perfect negotiation: on an offer collision, the impolite peer ignores it.
+    const collision = entry.makingOffer || pc.signalingState !== 'stable'
+    if (!entry.polite && collision) return
     try {
-      const pc = createPeerConnection(from)
-      peerConnections.current.set(from, pc)
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      websocketManager.send('webrtc-answer', { to: from, from: username, answer, roomId: id })
+      await pc.setRemoteDescription(new RTCSessionDescription(offer)) // implicit rollback if polite
+      await flushCandidates(entry)
+      await pc.setLocalDescription() // creates the answer
+      websocketManager.send('webrtc-answer', { to: from, from: username, answer: pc.localDescription, roomId: id })
     } catch (error) {
       console.error('Error handling WebRTC offer:', error)
     }
   }
 
   const handleWebRTCAnswer = async (data) => {
-    const { from, answer, roomId: answerRoomId } = data
+    const { from, to, answer, roomId: answerRoomId } = data
     if (answerRoomId !== id) return
     if (!from || from === username) return // ignore our own echoed answer
+    if (to && to !== username) return
+    const entry = peers.current.get(from)
+    if (!entry) return
     try {
-      const pc = peerConnections.current.get(from)
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer))
+      // Only apply an answer when we actually have an outstanding local offer.
+      if (entry.pc.signalingState === 'have-local-offer') {
+        await entry.pc.setRemoteDescription(new RTCSessionDescription(answer))
+        await flushCandidates(entry)
+      }
     } catch (error) {
       console.error('Error handling WebRTC answer:', error)
     }
   }
 
   const handleWebRTCIceCandidate = async (data) => {
-    const { from, candidate, roomId: candidateRoomId } = data
+    const { from, to, candidate, roomId: candidateRoomId } = data
     if (candidateRoomId !== id) return
     if (!from || from === username) return // ignore our own echoed candidate
-    try {
-      const pc = peerConnections.current.get(from)
-      if (pc && candidate) await pc.addIceCandidate(new RTCIceCandidate(candidate))
-    } catch (error) {
-      console.error('Error handling ICE candidate:', error)
+    if (to && to !== username) return
+    const entry = peers.current.get(from)
+    if (!entry || !candidate) return
+    const ice = new RTCIceCandidate(candidate)
+    // Queue candidates that arrive before the remote description is set.
+    if (entry.pc.remoteDescription && entry.pc.remoteDescription.type) {
+      try { await entry.pc.addIceCandidate(ice) } catch (e) { console.error('addIceCandidate:', e) }
+    } else {
+      entry.pendingCandidates.push(ice)
     }
   }
 
-  const createPeerConnection = (participantId, stream = null) => {
-    const configuration = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+  const flushCandidates = async (entry) => {
+    for (const c of entry.pendingCandidates) {
+      try { await entry.pc.addIceCandidate(c) } catch (e) { /* ignore */ }
     }
-    const pc = new RTCPeerConnection(configuration)
-    const streamToUse = stream || localStream
-    if (streamToUse) {
-      streamToUse.getTracks().forEach(track => pc.addTrack(track, streamToUse))
+    entry.pendingCandidates = []
+  }
+
+  // Create (or reuse) a peer connection to `peerId` using perfect negotiation.
+  const ensurePeer = (peerId) => {
+    const existing = peers.current.get(peerId)
+    if (existing) return existing
+
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    const entry = {
+      pc,
+      makingOffer: false,
+      // Deterministic roles eliminate offer glare: exactly one side is "polite".
+      polite: username < peerId,
+      pendingCandidates: []
     }
-    pc.ontrack = (event) => {
-      const remoteStream = event.streams[0]
-      setRemoteStreams(prev => new Map(prev).set(participantId, remoteStream))
+    peers.current.set(peerId, entry)
+
+    // If we're already sharing, add our tracks now (this triggers negotiation).
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current))
     }
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        websocketManager.send('webrtc-ice-candidate', {
-          to: participantId, from: username, candidate: event.candidate, roomId: id
-        })
+
+    pc.onnegotiationneeded = async () => {
+      try {
+        entry.makingOffer = true
+        await pc.setLocalDescription() // implicit offer
+        websocketManager.send('webrtc-offer', { to: peerId, from: username, offer: pc.localDescription, roomId: id })
+      } catch (e) {
+        console.error('negotiationneeded error:', e)
+      } finally {
+        entry.makingOffer = false
       }
     }
-    peerConnections.current.set(participantId, pc)
-    return pc
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        websocketManager.send('webrtc-ice-candidate', { to: peerId, from: username, candidate, roomId: id })
+      }
+    }
+    pc.ontrack = (event) => {
+      const [stream] = event.streams
+      if (stream) setRemoteStreams(prev => new Map(prev).set(peerId, stream))
+    }
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        try { pc.restartIce() } catch (e) { /* older browsers */ }
+      }
+    }
+    return entry
   }
 
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      localStreamRef.current = stream
       setLocalStream(stream)
       setIsCallActive(true)
       setWebcamsOpen(true)
       setSidebarOpen(true)
 
-      for (const participant of participants) {
-        if (participant.username !== username) {
-          const pc = createPeerConnection(participant.username, stream)
-          try {
-            const offer = await pc.createOffer()
-            await pc.setLocalDescription(offer)
-            websocketManager.send('webrtc-offer', {
-              to: participant.username, from: username, offer, roomId: id
-            })
-          } catch (error) {
-            console.error('Error creating offer for', participant.username, ':', error)
+      // Attach our tracks to every peer (existing or new). Adding a track fires
+      // onnegotiationneeded, which sends the offer via perfect negotiation.
+      participantsRef.current.forEach(participant => {
+        if (participant.username === username) return
+        const entry = ensurePeer(participant.username)
+        const senders = entry.pc.getSenders()
+        stream.getTracks().forEach(track => {
+          if (!senders.find(s => s.track === track)) {
+            entry.pc.addTrack(track, stream)
           }
-        }
-      }
+        })
+      })
+
       websocketManager.send('webrtc-call-started', { username, roomId: id, media: 'camera' })
     } catch (error) {
       console.error('Error starting camera:', error)
@@ -280,12 +332,13 @@ const RoomPage = () => {
   }
 
   const stopCamera = () => {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop())
-      setLocalStream(null)
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop())
+      localStreamRef.current = null
     }
-    peerConnections.current.forEach(pc => pc.close())
-    peerConnections.current.clear()
+    setLocalStream(null)
+    peers.current.forEach(entry => entry.pc.close())
+    peers.current.clear()
     websocketManager.send('webrtc-call-ended', { username, roomId: id })
     setIsCallActive(false)
     setRemoteStreams(new Map())

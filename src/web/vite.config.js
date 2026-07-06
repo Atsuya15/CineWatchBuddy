@@ -17,16 +17,14 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // [TUNNEL] Dev proxy for same-origin relative API/WS paths. In production the
+    // Go backend serves the built app and these routes directly (single origin).
     proxy: {
-      '/ws': {
-        target: 'http://localhost:8080',
-        ws: true
-      },
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      }
+      '/ws': { target: 'http://localhost:8080', ws: true },
+      '/create-room': 'http://localhost:8080',
+      '/join-room': 'http://localhost:8080',
+      '/rooms': 'http://localhost:8080',
+      '/health': 'http://localhost:8080'
     }
   }
 })

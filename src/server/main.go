@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ type Server struct {
 	config     *Config
     clientRooms map[string]string
     clientUsers map[string]string
+    writeMu     map[string]*sync.Mutex
 }
 
 type Config struct {
@@ -105,6 +107,7 @@ func NewServer(config *Config) (*Server, error) {
 		config:      config,
         clientRooms: make(map[string]string),
         clientUsers: make(map[string]string),
+        writeMu:     make(map[string]*sync.Mutex),
 	}
 
 	// Load existing rooms from database
@@ -453,6 +456,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
     s.mutex.Lock()
     s.clients[clientID] = conn
     s.clientRooms[clientID] = roomID
+    s.writeMu[clientID] = &sync.Mutex{}
     s.mutex.Unlock()
 
 	log.Printf("WebSocket client connected: %s", clientID)
@@ -481,6 +485,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
     username := s.clientUsers[clientID]
     delete(s.clientRooms, clientID)
     delete(s.clientUsers, clientID)
+    delete(s.writeMu, clientID)
 
     // Determine whether this user still has other active connections in the room
     userStillConnected := false
@@ -946,42 +951,54 @@ func (s *Server) validateRoomAccess(roomID, clientID string) bool {
 	return false
 }
 
-func (s *Server) sendToClient(clientID string, msg WebSocketMessage) {
+// writeJSON serializes writes per connection (gorilla forbids concurrent
+// writers) and never holds the server mutex during the network write, so one
+// slow/dead client can't stall the whole server. A write deadline bounds it.
+func (s *Server) writeJSON(clientID string, msg interface{}) bool {
 	s.mutex.RLock()
-	conn, exists := s.clients[clientID]
+	conn := s.clients[clientID]
+	wm := s.writeMu[clientID]
 	s.mutex.RUnlock()
 
-	if !exists {
-		return
+	if conn == nil || wm == nil {
+		return false
 	}
 
-	if err := conn.WriteJSON(msg); err != nil {
-		log.Printf("Failed to send message to client %s: %v", clientID, err)
+	wm.Lock()
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err := conn.WriteJSON(msg)
+	wm.Unlock()
+
+	if err != nil {
+		log.Printf("write to client %s failed: %v", clientID, err)
+		return false
 	}
+	return true
+}
+
+func (s *Server) sendToClient(clientID string, msg WebSocketMessage) {
+	s.writeJSON(clientID, msg)
 }
 
 func (s *Server) broadcastToRoom(roomID string, msg WebSocketMessage) {
+    // Snapshot the target client IDs under the lock, then write OUTSIDE the lock
+    // so a blocked write to one client can't stall everyone else.
     s.mutex.RLock()
-    // Ensure room exists
     if _, exists := s.rooms[roomID]; !exists {
         s.mutex.RUnlock()
-        log.Printf("Room %s not found for broadcast", roomID)
         return
     }
-    log.Printf("Broadcasting %s to room %s", msg.Type, roomID)
-    // Broadcast only to clients in the same room
-    for clientID, conn := range s.clients {
-        if s.clientRooms[clientID] != roomID {
-            continue
-        }
-        if err := conn.WriteJSON(msg); err != nil {
-            log.Printf("Failed to broadcast to client %s: %v", clientID, err)
-            // Removal is handled on disconnect paths
-        } else {
-            log.Printf("Sent %s to client %s", msg.Type, clientID)
+    targets := make([]string, 0, len(s.clients))
+    for clientID := range s.clients {
+        if s.clientRooms[clientID] == roomID {
+            targets = append(targets, clientID)
         }
     }
     s.mutex.RUnlock()
+
+    for _, clientID := range targets {
+        s.writeJSON(clientID, msg)
+    }
 }
 
 func (s *Server) startPingPong(ctx context.Context, clientID string, conn *websocket.Conn) {
@@ -993,7 +1010,8 @@ func (s *Server) startPingPong(ctx context.Context, clientID string, conn *webso
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			// WriteControl is safe to call concurrently with other writers.
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 				log.Printf("Ping failed for client %s: %v", clientID, err)
 				return
 			}
@@ -1246,8 +1264,21 @@ func main() {
 	http.HandleFunc("/ws", server.handleWebSocket)
 	http.HandleFunc("/health", server.handleHealth)
 
-	// Serve static files
-	http.Handle("/", http.FileServer(http.Dir("../web/dist")))
+	// [TUNNEL] Serve the built React app with SPA fallback so client-side routes
+	// (e.g. /room/<id>) resolve to index.html instead of 404. This enables
+	// single-origin serving behind Cloudflare Tunnel. Revert to the original
+	// `http.Handle("/", http.FileServer(http.Dir("../web/dist")))` if not needed.
+	webDir := getEnv("WEB_DIR", "../web/dist")
+	fileServer := http.FileServer(http.Dir(webDir))
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		clean := filepath.Clean(r.URL.Path)
+		full := filepath.Join(webDir, clean)
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+	})
 
 	// Start server
     log.Printf("Starting CineWatchBuddy server on port %s", config.Port)

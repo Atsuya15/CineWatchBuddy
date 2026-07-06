@@ -25,8 +25,11 @@ class WebSocketManager {
 
     this.connectPromise = new Promise((resolve, reject) => {
       try {
-        const wsHost = `${window.location.hostname || 'localhost'}:8080`
-        const wsUrl = `ws://${wsHost}/ws?room=${roomId}&user=${encodeURIComponent(username)}`
+        // [TUNNEL] Use the current page origin so this works behind Cloudflare
+        // Tunnel (https -> wss) and any reverse proxy, as well as locally.
+        // Revert to `ws://localhost:8080/ws` for the original direct-to-backend setup.
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const wsUrl = `${wsProto}//${window.location.host}/ws?room=${roomId}&user=${encodeURIComponent(username)}`
         console.log('Attempting to connect to WebSocket:', wsUrl)
         this.ws = new WebSocket(wsUrl)
 

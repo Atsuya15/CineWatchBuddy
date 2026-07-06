@@ -20,7 +20,8 @@ const LandingPage = () => {
     setError('')
 
     try {
-      const response = await fetch('/api/create-room', {
+      // [TUNNEL] same-origin relative path (was '/api/create-room' via vite proxy)
+      const response = await fetch('/create-room', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -64,7 +65,8 @@ const LandingPage = () => {
     setError('')
 
     try {
-      const response = await fetch('/api/join-room', {
+      // [TUNNEL] same-origin relative path (was '/api/join-room' via vite proxy)
+      const response = await fetch('/join-room', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

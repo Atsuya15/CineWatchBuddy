@@ -296,68 +296,97 @@ Server rebuilds room state dynamically from reconnecting clients.
 ────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
-## Quick Start
+## How to Use
+
+Follow these steps to clone the repo and run a watch party locally.
 
 ### Prerequisites
 
-- Node.js 18+ and npm
-- Go 1.21+
-- Chrome or Firefox browser
+- **Node.js 18+** and npm (developed on Node 20/26)
+- **Go 1.21+** with a C compiler available — the backend stores state in SQLite via CGO:
+  - macOS: `xcode-select --install`
+  - Debian/Ubuntu: `sudo apt install build-essential`
+  - Windows: a gcc toolchain such as [TDM-GCC](https://jmeubank.github.io/tdm-gcc/) or MinGW-w64
+- **Google Chrome** (only required for the optional browser extension)
 
-### Installation
+### 1. Clone and install dependencies
 
-1. **Clone the repository**
+```bash
+git clone <repository-url>
+cd CineWatchBuddy
+npm run install-deps        # installs root deps, Go modules, and web-client deps
+```
+
+> `install-deps` is a shortcut for: `npm install` &nbsp;+&nbsp; `cd src/server && go mod tidy` &nbsp;+&nbsp; `cd src/web && npm install`.
+>
+> On recent npm versions the web client's `esbuild`/`vite` install script may be blocked. If step 3 later fails with an esbuild error, run:
+> ```bash
+> cd src/web
+> npm approve-scripts --allow-scripts-pending   # allow esbuild + fsevents
+> npm rebuild esbuild
+> ```
+
+### 2. Start the backend (Terminal 1)
+
+```bash
+npm run start-backend
+```
+
+Runs the Go WebSocket + REST server on **http://localhost:8080** and creates a local `cinewatchbuddy.db` (SQLite, git-ignored). You should see `Starting CineWatchBuddy server on port 8080`.
+
+### 3. Start the web client (Terminal 2)
+
+```bash
+npm run start-web
+```
+
+Runs the Vite dev server on **http://localhost:3000** and proxies API + WebSocket traffic to the backend. **Open http://localhost:3000 in your browser.**
+
+### 4. Start a watch party
+
+1. Enter a **username**.
+2. **Create a room** — optionally give it a friendly name like `movie-night` so friends can join by that name instead of a long id. Or use **Join** with a room name or id.
+3. Paste a **YouTube / Vimeo / direct video URL** and click **Load Video**. Play, pause, and seek stay in sync for everyone in the room.
+4. Use the **Chat** panel, and **Start camera** for WebRTC webcam chat. The camera and chat panels are collapsible and resizable.
+5. Click **🔗 Invite** to copy the room link — or just tell friends the room name.
+
+To see it sync, open a second browser (or another device on your network) and join the same room.
+
+### 5. (Optional) Chrome extension for DRM sites
+
+The extension keeps playback in sync on streaming sites that block normal embedding (Netflix, Disney+, Prime Video, Hulu, HBO Max, Paramount+, Peacock).
+
+1. **Build it:**
    ```bash
-   git clone <repository-url>
-   cd CineWatchBuddy
+   npm run build      # outputs the unpacked extension to ./dist
    ```
+2. **Load it in Chrome:**
+   - Open `chrome://extensions/`
+   - Enable **Developer mode** (top-right)
+   - Click **Load unpacked** and select the `dist` folder
+   - Pin the CineWatchBuddy icon — the badge shows **ON** when it's connected to the backend
+3. Click the icon, enter a username, then **Create** or **Join** a room.
+4. Open a supported streaming site and play a video — play/pause/seek sync with everyone in that room.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+> **Try the extension sync locally (no subscription needed):** with the backend running, open **http://localhost:8080/ext-test** in two Chrome windows that both have the extension loaded and are joined to the same room. Play/pause the test video in one and it reflects in the other.
+>
+> After changing extension source, run `npm run build` again and click the **reload** icon on the extension's card in `chrome://extensions/`.
 
-3. **Build the extension**
-   ```bash
-   npm run build-extension
-   ```
+### Production build (serve everything from Go)
 
-4. **Start the backend server**
-   ```bash
-   npm run start-backend
-   ```
+To serve the web client from the Go server instead of the Vite dev server:
 
-5. **Load the extension in your browser**
-   - Chrome: Go to `chrome://extensions/`, enable Developer mode, click "Load unpacked", select the `dist` folder
-   - Firefox: Go to `about:debugging`, click "This Firefox", click "Load Temporary Add-on", select `dist/manifest.json`
+```bash
+npm run build-web        # builds the React app into src/web/dist
+npm run start-backend    # Go serves it at http://localhost:8080
+```
 
-### Development
+### Troubleshooting
 
-1. **Start development mode**
-   ```bash
-   # Terminal 1: Watch for changes and rebuild
-   npm run dev
-   
-   # Terminal 2: Start backend server
-   npm run dev-backend
-   ```
-
-2. **Reload the extension** in your browser after making changes
-
-## Usage
-
-### Web Client (Primary Interface)
-1. **Access the web client** at `http://localhost:8080`
-2. **Create or join a room** with your username
-3. **Paste video URLs** (YouTube, Vimeo, etc.) to watch together
-4. **Use chat and video calls** to communicate with friends
-5. **Share room links** with friends to invite them
-
-### Chrome Extension (DRM Content)
-1. **Install the extension** in Chrome
-2. **Navigate to DRM sites** (Netflix, Disney+, Prime Video, etc.)
-3. **The extension automatically connects** to active CineWatchBuddy rooms
-4. **Video sync and chat work seamlessly** between web client and extension
+- **Backend won't start / `address already in use`** — port 8080 is busy. Free it and retry: `lsof -ti :8080 | xargs kill` (macOS/Linux).
+- **`go run` fails with cgo/sqlite errors** — install a C compiler (see Prerequisites).
+- **Web client is blank or shows WebSocket errors** — make sure the backend is running on :8080 and you opened the app at **:3000** (not :8080).
+- **`esbuild`/vite install error** — run the approve-scripts commands from step 1.
 
 ## Supported Platforms
 
