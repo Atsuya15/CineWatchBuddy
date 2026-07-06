@@ -17,6 +17,15 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   const ytPlayerRef = useRef(null)
   const [isYouTube, setIsYouTube] = useState(false)
   const isUserAction = useRef(false)
+  // Suppress OUTGOING sync while (and shortly after) we apply a remote update.
+  // Applying a play/pause/seek fires the local media events, which would
+  // otherwise re-broadcast and, with tunnel latency, storm the socket until it
+  // drops — making participants appear to get kicked out.
+  const remoteUntil = useRef(0)
+  // Mirror state into refs so the once-bound WS handler reads CURRENT values
+  // (otherwise it sees the initial empty videoUrl and reloads on every sync).
+  const videoUrlRef = useRef('')
+  const isYouTubeRef = useRef(false)
 
   useEffect(() => {
     // Connect to shared WebSocket
@@ -54,20 +63,28 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
     }
   }, [videoUrl, isYouTube])
 
+  useEffect(() => { videoUrlRef.current = videoUrl }, [videoUrl])
+  useEffect(() => { isYouTubeRef.current = isYouTube }, [isYouTube])
+
   const handleWebSocketMessage = (data) => {
     switch (data.type) {
       case 'video-sync':
         if (data.data && !isUserAction.current) {
+          // Entering apply mode: hold off on any outgoing sync for a bit so the
+          // events our own play/pause/seek trigger don't echo back to the room.
+          remoteUntil.current = Date.now() + 1200
           const { currentTime: syncTime, paused, volume: syncVolume, url: videoUrlFromSync } = data.data
           const url = videoUrlFromSync || data.data.videoUrl
           console.log('🎥 Received video sync:', { url, currentTime: syncTime, paused })
           
-          // Handle URL change first
-          if (url && url !== videoUrl) {
+          // Handle URL change first (compare against the ref, not stale state)
+          if (url && url !== videoUrlRef.current) {
             console.log('🎥 Syncing video URL from another participant:', url)
             setIsSyncingVideo(true)
             setVideoUrl(url)
+            videoUrlRef.current = url
             setIsYouTube(isYouTubeUrl(url))
+            isYouTubeRef.current = isYouTubeUrl(url)
             
             // Automatically load the video for other participants
             if (isYouTubeUrl(url)) {
@@ -88,7 +105,7 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           // Update UI state for all video types
           setIsPlaying(!paused)
           
-          if (isYouTube && ytPlayerRef.current) {
+          if (isYouTubeRef.current && ytPlayerRef.current) {
             if (url && playerRef.current !== url) {
               loadYouTube(url)
             }
@@ -146,6 +163,9 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           if (currentVideo) {
             const videoUrl = currentVideo.url || currentVideo.VideoURL || currentVideo.videoUrl
             if (videoUrl) {
+              // Only suppress echoes when there's real state to apply, so a
+              // fresh joiner's own first action isn't swallowed.
+              remoteUntil.current = Date.now() + 1200
               setVideoUrl(videoUrl)
               if (isYouTubeUrl(videoUrl)) {
                 loadYouTube(videoUrl)
@@ -189,6 +209,10 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   }
 
   const sendVideoSync = (data) => {
+    // Don't echo a change we just applied from a remote sync.
+    if (Date.now() < remoteUntil.current) {
+      return
+    }
     const message = {
       ...data,
       url: data.url || videoUrl, // Use the URL from data if provided, otherwise use current videoUrl

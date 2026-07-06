@@ -1,99 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { websocketManager } from '../utils/websocketManager'
 
-const ChatPanel = ({ roomId, username, showHeader = true }) => {
-  const [messages, setMessages] = useState([])
+// Presentational chat panel. Message history is owned by RoomPage and passed in
+// via `messages`, so it persists even when this window is toggled off/on.
+const ChatPanel = ({ roomId, username, messages = [], showHeader = true }) => {
   const [newMessage, setNewMessage] = useState('')
-  const [ws, setWs] = useState(null)
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
 
-  const scrollToBottom = () => {
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  useEffect(() => {
-    scrollToBottom()
   }, [messages])
-
-  useEffect(() => {
-    // Use shared WebSocket connection from parent
-    const handleMessage = (event) => {
-      try {
-        const data = event.detail
-        console.log('💬 ChatPanel received message:', data)
-        switch (data.type) {
-          case 'chat-message':
-            console.log('💬 Processing chat message:', data.data)
-            setMessages(prev => {
-              // Check if message already exists to prevent duplicates
-              const exists = prev.some(msg => msg.id === data.data.id)
-              if (exists) {
-                console.log('💬 Message already exists, skipping')
-                return prev
-              }
-              console.log('💬 Adding new message to chat')
-              return [...prev, data.data]
-            })
-            break
-          case 'room-joined':
-            // Load chat history when joining room
-            if (data.data && data.data.chatHistory) {
-              setMessages(data.data.chatHistory.map(msg => ({
-                id: msg.id,
-                username: msg.username,
-                content: msg.content,
-                timestamp: msg.timestamp,
-                type: msg.type || 'message'
-              })))
-            }
-            break
-          case 'participant-joined':
-            // Add system message for new participant (only once)
-            if (data.data && data.data.participant) {
-              const systemMessage = {
-                id: `system-${data.data.participant.id}-joined`,
-                username: 'System',
-                content: `${data.data.participant.username} joined the room`,
-                timestamp: new Date().toISOString(),
-                type: 'system'
-              }
-              setMessages(prev => {
-                const exists = prev.some(msg => msg.id === systemMessage.id)
-                return exists ? prev : [...prev, systemMessage]
-              })
-            }
-            break
-          case 'participant-left':
-            // Add system message for leaving participant.
-            // Server sends { username }; older shape was { participant: {...} }.
-            {
-              const leftName = data.data?.username || data.data?.participant?.username
-              if (leftName) {
-                const systemMessage = {
-                  id: `system-${leftName}-left-${Date.now()}`,
-                  username: 'System',
-                  content: `${leftName} left the room`,
-                  timestamp: new Date().toISOString(),
-                  type: 'system'
-                }
-                setMessages(prev => [...prev, systemMessage])
-              }
-            }
-            break
-        }
-      } catch (err) {
-        console.error('Error parsing chat message:', err)
-      }
-    }
-
-    // Listen to window events for shared WebSocket
-    window.addEventListener('cinewatchbuddy-message', handleMessage)
-
-    return () => {
-      window.removeEventListener('cinewatchbuddy-message', handleMessage)
-    }
-  }, [roomId, username])
 
   const sendMessage = (e) => {
     e.preventDefault()

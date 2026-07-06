@@ -487,18 +487,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
     delete(s.clientUsers, clientID)
     delete(s.writeMu, clientID)
 
-    // Determine whether this user still has other active connections in the room
-    userStillConnected := false
-    if username != "" {
-        for cid, uname := range s.clientUsers {
-            if uname == username && s.clientRooms[cid] == roomID {
-                userStillConnected = true
-                break
-            }
-        }
-    }
-
-    // Remove client from room and mark participant inactive if fully gone
+    // Remove this client from the room's client list immediately.
     if roomID != "" && roomID != "_" {
         if room, exists := s.rooms[roomID]; exists {
             for i, cid := range room.Clients {
@@ -507,29 +496,47 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
                     break
                 }
             }
-            if username != "" && !userStillConnected {
-                for _, p := range room.Participants {
-                    if p.Username == username && p.IsActive {
-                        p.IsActive = false
-                        s.db.RemoveParticipant(p.ID)
-                        break
-                    }
-                }
-            }
         }
     }
     s.mutex.Unlock()
 
-    // Notify the room that the participant left (only if no other connection remains)
-    if roomID != "" && roomID != "_" && username != "" && !userStillConnected {
-        s.broadcastToRoom(roomID, WebSocketMessage{
-            Type: "participant-left",
-            Data: map[string]interface{}{
-                "username": username,
-            },
-        })
+    // Grace period before announcing a departure. Flaky connections (common over
+    // tunnels) reconnect within a second or two; announcing "left" too eagerly
+    // makes other participants see the user get kicked out of the room.
+    if roomID != "" && roomID != "_" && username != "" {
+        go s.handleParticipantDeparture(roomID, username)
     }
 	log.Printf("WebSocket client disconnected: %s", clientID)
+}
+
+// handleParticipantDeparture waits out a grace period and only marks a user as
+// left if they have not reconnected to the room in the meantime.
+func (s *Server) handleParticipantDeparture(roomID, username string) {
+	time.Sleep(3 * time.Second)
+
+	s.mutex.Lock()
+	for cid, uname := range s.clientUsers {
+		if uname == username && s.clientRooms[cid] == roomID {
+			// User reconnected during the grace window — nothing to announce.
+			s.mutex.Unlock()
+			return
+		}
+	}
+	if room, exists := s.rooms[roomID]; exists {
+		for _, p := range room.Participants {
+			if p.Username == username && p.IsActive {
+				p.IsActive = false
+				s.db.RemoveParticipant(p.ID)
+				break
+			}
+		}
+	}
+	s.mutex.Unlock()
+
+	s.broadcastToRoom(roomID, WebSocketMessage{
+		Type: "participant-left",
+		Data: map[string]interface{}{"username": username},
+	})
 }
 
 func (s *Server) handleWebSocketMessage(clientID string, msg WebSocketMessage) {
@@ -1274,9 +1281,13 @@ func main() {
 		clean := filepath.Clean(r.URL.Path)
 		full := filepath.Join(webDir, clean)
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			// Hashed asset filenames make these safe to cache long-term.
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		// index.html must never be cached, so clients always pick up the latest
+		// hashed bundle after an update.
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
 	})
 

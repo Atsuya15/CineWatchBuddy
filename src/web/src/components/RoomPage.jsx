@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { websocketManager } from '../utils/websocketManager'
 import VideoPlayer from './VideoPlayer'
 import ChatPanel from './ChatPanel'
+import FloatingWindow from './FloatingWindow'
+import CameraGrid from './CameraGrid'
 
 const MIN_SIDEBAR = 280
 const MAX_SIDEBAR = 620
@@ -34,13 +36,15 @@ const RoomPage = () => {
   const [isMuted, setIsMuted] = useState(false)
   const [isVideoOff, setIsVideoOff] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Chat history lives here (not in ChatPanel) so it survives toggling the
+  // chat window on/off during a session.
+  const [chatMessages, setChatMessages] = useState([])
 
-  // Layout state — collapsible + resizable panels
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Layout: right panel (separated from the video by a divider) that holds the
+  // floating camera + chat windows
+  const [showCamera, setShowCamera] = useState(true)
+  const [showChat, setShowChat] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(360)
-  const [webcamsOpen, setWebcamsOpen] = useState(true)
-  const [chatOpen, setChatOpen] = useState(true)
-  const [webcamHeight, setWebcamHeight] = useState(240)
 
   // Refs
   const localVideoRef = useRef(null)
@@ -48,7 +52,7 @@ const RoomPage = () => {
   const peers = useRef(new Map()) // peerId -> { pc, makingOffer, polite, pendingCandidates }
   const localStreamRef = useRef(null)
   const participantsRef = useRef([])
-  const sidebarBodyRef = useRef(null)
+  const sidebarRef = useRef(null)
 
   useEffect(() => {
     const savedUsername = localStorage.getItem('cinewatchbuddy_username')
@@ -94,7 +98,7 @@ const RoomPage = () => {
       localVideoRef.current.srcObject = localStream
       localVideoRef.current.play().catch(e => console.log('Local video play error:', e))
     }
-  }, [localStream, webcamsOpen, sidebarOpen])
+  }, [localStream, showCamera])
 
   // Keep a ref of participants so WebRTC handlers (bound once) always see the
   // current list rather than a stale closure value.
@@ -109,6 +113,19 @@ const RoomPage = () => {
           setParticipants(existing
             .filter(p => p.isActive !== false && p.username !== username)
             .map(p => ({ id: p.username, username: p.username, isSharing: false, mediaType: null })))
+          // Load chat history once (subsequent messages append below)
+          const history = data.data.chatHistory || data.data.room?.chatHistory || []
+          if (history.length) {
+            setChatMessages(history.map(m => ({
+              id: m.id, username: m.username, content: m.content,
+              timestamp: m.timestamp, type: m.type || 'message'
+            })))
+          }
+        }
+        break
+      case 'chat-message':
+        if (data.data) {
+          setChatMessages(prev => prev.some(m => m.id === data.data.id) ? prev : [...prev, data.data])
         }
         break
       case 'participant-joined':
@@ -137,6 +154,12 @@ const RoomPage = () => {
     }
   }
 
+  const addSystemMessage = (text, id) => {
+    setChatMessages(prev => prev.some(m => m.id === id) ? prev : [...prev, {
+      id, username: 'System', content: text, timestamp: new Date().toISOString(), type: 'system'
+    }])
+  }
+
   const handleParticipantJoined = (data) => {
     const joined = data?.participant || data
     const joinedName = joined?.username
@@ -148,12 +171,14 @@ const RoomPage = () => {
       }
       return prev
     })
+    addSystemMessage(`${joinedName} joined the room`, `sys-join-${joinedName}`)
   }
 
   const handleParticipantLeft = (data) => {
     const leftName = data?.username || data?.participant?.username
     if (!leftName) return
     setParticipants(prev => prev.filter(p => p.username !== leftName))
+    addSystemMessage(`${leftName} left the room`, `sys-left-${leftName}-${Date.now()}`)
     // Tear down any peer connection / remote tile for the departing user
     const entry = peers.current.get(leftName)
     if (entry) { entry.pc.close(); peers.current.delete(leftName) }
@@ -308,8 +333,7 @@ const RoomPage = () => {
       localStreamRef.current = stream
       setLocalStream(stream)
       setIsCallActive(true)
-      setWebcamsOpen(true)
-      setSidebarOpen(true)
+      setShowCamera(true)
 
       // Attach our tracks to every peer (existing or new). Adding a track fires
       // onnegotiationneeded, which sends the offer via perfect negotiation.
@@ -383,13 +407,19 @@ const RoomPage = () => {
     }
   }
 
-  // ----- Resizing -----
+  // The windows float INSIDE the right panel, so their initial positions are
+  // relative to that panel (stacked: camera on top, chat below).
+  const camLayout = useRef(null)
+  const chatLayout = useRef(null)
+  if (!camLayout.current) {
+    camLayout.current = { x: 10, y: 10, w: 336, h: 250 }
+    chatLayout.current = { x: 10, y: 272, w: 336, h: 360 }
+  }
+
+  // Resize the right panel by dragging the divider between it and the video.
   const startResizeSidebar = useCallback((e) => {
     e.preventDefault()
-    const onMove = (ev) => {
-      const w = window.innerWidth - ev.clientX
-      setSidebarWidth(Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, w)))
-    }
+    const onMove = (ev) => setSidebarWidth(Math.min(640, Math.max(260, window.innerWidth - ev.clientX)))
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
@@ -398,26 +428,6 @@ const RoomPage = () => {
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }, [])
-
-  const startResizeWebcam = useCallback((e) => {
-    e.preventDefault()
-    const rect = sidebarBodyRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const onMove = (ev) => {
-      const h = ev.clientY - rect.top
-      setWebcamHeight(Math.min(rect.height - 160, Math.max(MIN_WEBCAM, h)))
-    }
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'row-resize'
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }, [])
@@ -450,15 +460,38 @@ const RoomPage = () => {
   const remoteEntries = Array.from(remoteStreams.entries())
   const webcamTileCount = (isCallActive ? 1 : 0) + remoteEntries.length
 
-  const PanelHeader = ({ icon, title, open, onToggle, right }) => (
-    <div className="flex items-center justify-between px-3 h-10 shrink-0 bg-gray-900/80 border-b border-gray-800 select-none">
-      <button onClick={onToggle} className="flex items-center gap-2 text-sm font-semibold text-gray-200 hover:text-white">
-        <span className={`text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
-        <span>{icon} {title}</span>
-      </button>
-      <div className="flex items-center gap-1">{right}</div>
-    </div>
-  )
+  // Build the participant camera tiles (local first, then remotes). Each is a
+  // keyed element that fills its cell; CameraGrid handles the resizable layout.
+  const camTiles = []
+  if (isCallActive) {
+    camTiles.push(
+      <div key="__local" className="w-full h-full relative bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
+        <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+        <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded">You</span>
+        <div className="absolute top-1 right-1 flex gap-1">
+          <button onClick={toggleMute}
+            className={`w-6 h-6 rounded-full text-xs flex items-center justify-center ${isMuted ? 'bg-red-600' : 'bg-gray-700/80'}`}>
+            {isMuted ? '🔇' : '🎤'}
+          </button>
+          <button onClick={toggleVideo}
+            className={`w-6 h-6 rounded-full text-xs flex items-center justify-center ${isVideoOff ? 'bg-red-600' : 'bg-gray-700/80'}`}>
+            {isVideoOff ? '📷' : '📹'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+  remoteEntries.forEach(([participantId, stream]) => {
+    camTiles.push(
+      <div key={participantId} className="w-full h-full relative bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
+        <video
+          ref={el => { if (el) { remoteVideoRefs.current.set(participantId, el); el.srcObject = stream } }}
+          autoPlay playsInline className="w-full h-full object-cover"
+        />
+        <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded">{participantId}</span>
+      </div>
+    )
+  })
 
   return (
     <div className="h-screen flex flex-col bg-black text-white overflow-hidden">
@@ -478,18 +511,18 @@ const RoomPage = () => {
           <span className="hidden md:inline text-xs text-gray-500">
             {participants.length + 1} watching
           </span>
-          <button
-            onClick={copyInvite}
-            className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-1.5 transition-colors"
-          >
+          <button onClick={() => setShowCamera(v => !v)}
+            className={`text-sm rounded-lg px-3 py-1.5 hover:bg-gray-700 ${showCamera ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400'}`}>
+            📹 Cameras
+          </button>
+          <button onClick={() => setShowChat(v => !v)}
+            className={`text-sm rounded-lg px-3 py-1.5 hover:bg-gray-700 ${showChat ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400'}`}>
+            💬 Chat
+          </button>
+          <button onClick={copyInvite}
+            className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-3 py-1.5 transition-colors">
             {copied ? '✓ Copied' : '🔗 Invite'}
           </button>
-          {!sidebarOpen && (
-            <button onClick={() => setSidebarOpen(true)} title="Show panel"
-              className="text-sm bg-gray-800 hover:bg-gray-700 rounded-lg px-3 py-1.5">
-              ☰
-            </button>
-          )}
           <button onClick={leaveRoom}
             className="text-sm bg-gray-800 hover:bg-red-600 text-gray-200 hover:text-white rounded-lg px-3 py-1.5 transition-colors">
             Leave
@@ -497,113 +530,63 @@ const RoomPage = () => {
         </div>
       </header>
 
-      {/* Main area */}
+      {/* Main area: [ video + participant strip ] [ chat sidebar ] */}
       <div className="flex-1 flex min-h-0">
-        {/* Video column (resizes as sidebar width changes) */}
+        {/* Video with a docked, resizable/collapsible participant strip below it */}
+        {/* Video area */}
         <div className="flex-1 min-w-0 flex flex-col bg-black">
           <div className="flex-1 min-h-0">
             <VideoPlayer roomId={id} username={username} onConnectionChange={handleConnectionChange} />
           </div>
         </div>
 
-        {/* Vertical resize handle */}
-        {sidebarOpen && (
-          <div
-            onMouseDown={startResizeSidebar}
-            className="w-1.5 shrink-0 cursor-col-resize bg-gray-800 hover:bg-blue-500 transition-colors"
-            title="Drag to resize"
-          />
-        )}
-
-        {/* Sidebar */}
-        {sidebarOpen && (
-          <aside style={{ width: sidebarWidth }} className="shrink-0 flex flex-col bg-gray-950 border-l border-gray-800">
-            <div ref={sidebarBodyRef} className="flex-1 flex flex-col min-h-0">
-              {/* Webcams panel */}
-              <div
-                className="flex flex-col min-h-0"
-                style={webcamsOpen && chatOpen ? { height: webcamHeight } : (webcamsOpen ? { flex: 1 } : undefined)}
-              >
-                <PanelHeader
-                  icon="📹" title={`Cameras${webcamTileCount ? ` (${webcamTileCount})` : ''}`}
-                  open={webcamsOpen} onToggle={() => setWebcamsOpen(o => !o)}
-                  right={isCallActive ? (
-                    <button onClick={stopCamera} className="text-xs bg-red-600 hover:bg-red-500 rounded px-2 py-1">Stop</button>
-                  ) : (
-                    <button onClick={startCamera} className="text-xs bg-blue-600 hover:bg-blue-500 rounded px-2 py-1">Start camera</button>
-                  )}
-                />
-                {webcamsOpen && (
-                  <div className="flex-1 min-h-0 overflow-y-auto p-2">
+        {/* Right panel — camera + chat float WITHIN this, separated from the video */}
+        {(showCamera || showChat) && (
+          <>
+            <div
+              onMouseDown={startResizeSidebar}
+              className="w-1.5 shrink-0 cursor-col-resize bg-gray-700 hover:bg-blue-500 transition-colors"
+              title="Drag to resize panel"
+            />
+            <div ref={sidebarRef} style={{ width: sidebarWidth }} className="relative shrink-0 bg-gray-900/50 border-l border-gray-800 overflow-hidden">
+              {/* Floating camera window (constrained to this panel) */}
+              {showCamera && (
+                <FloatingWindow
+                  title={`Cameras${webcamTileCount ? ` (${webcamTileCount})` : ''}`} icon="📹"
+                  initial={camLayout.current} minW={180} minH={140} boundsRef={sidebarRef}
+                  onClose={() => setShowCamera(false)}
+                  headerRight={
+                    isCallActive
+                      ? <button data-no-drag onClick={stopCamera} className="text-xs bg-red-600 hover:bg-red-500 rounded px-2 py-1">Stop</button>
+                      : <button data-no-drag onClick={startCamera} className="text-xs bg-blue-600 hover:bg-blue-500 rounded px-2 py-1">Start</button>
+                  }
+                >
+                  <div className="h-full p-2 bg-gray-950 flex flex-col">
                     {webcamTileCount === 0 ? (
-                      <div className="h-full flex items-center justify-center text-center text-gray-600 text-sm px-4">
-                        Start your camera to video-chat while you watch.
+                      <div className="flex-1 flex items-center justify-center text-center text-gray-600 text-sm px-3">
+                        Start your camera to appear here.
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-2">
-                        {isCallActive && (
-                          <div className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
-                            <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-                            <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded">You</span>
-                            <div className="absolute top-1 right-1 flex gap-1">
-                              <button onClick={toggleMute}
-                                className={`w-6 h-6 rounded-full text-xs flex items-center justify-center ${isMuted ? 'bg-red-600' : 'bg-gray-700/80'}`}>
-                                {isMuted ? '🔇' : '🎤'}
-                              </button>
-                              <button onClick={toggleVideo}
-                                className={`w-6 h-6 rounded-full text-xs flex items-center justify-center ${isVideoOff ? 'bg-red-600' : 'bg-gray-700/80'}`}>
-                                {isVideoOff ? '📷' : '📹'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {remoteEntries.map(([participantId, stream]) => (
-                          <div key={participantId} className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800">
-                            <video
-                              ref={el => { if (el) { remoteVideoRefs.current.set(participantId, el); el.srcObject = stream } }}
-                              autoPlay playsInline className="w-full h-full object-cover"
-                            />
-                            <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 px-1.5 py-0.5 rounded">{participantId}</span>
-                          </div>
-                        ))}
+                      <div className="flex-1 min-h-0">
+                        <CameraGrid tiles={camTiles} />
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-
-              {/* Horizontal resize handle (only when both panels open) */}
-              {webcamsOpen && chatOpen && (
-                <div
-                  onMouseDown={startResizeWebcam}
-                  className="h-1.5 shrink-0 cursor-row-resize bg-gray-800 hover:bg-blue-500 transition-colors"
-                  title="Drag to resize"
-                />
+                </FloatingWindow>
               )}
 
-              {/* Chat panel */}
-              <div className={`flex flex-col min-h-0 ${chatOpen ? 'flex-1' : ''}`}>
-                <PanelHeader
-                  icon="💬" title="Chat"
-                  open={chatOpen} onToggle={() => setChatOpen(o => !o)}
-                />
-                {chatOpen && (
-                  <div className="flex-1 min-h-0">
-                    <ChatPanel roomId={id} username={username} showHeader={false} />
-                  </div>
-                )}
-              </div>
+              {/* Floating chat window (constrained to this panel) */}
+              {showChat && (
+                <FloatingWindow
+                  title="Chat" icon="💬" initial={chatLayout.current}
+                  minW={220} minH={180} boundsRef={sidebarRef}
+                  onClose={() => setShowChat(false)}
+                >
+                  <ChatPanel roomId={id} username={username} messages={chatMessages} showHeader={false} />
+                </FloatingWindow>
+              )}
             </div>
-
-            {/* Collapse-sidebar control */}
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="h-8 shrink-0 text-xs text-gray-500 hover:text-gray-300 border-t border-gray-800 bg-gray-950"
-              title="Hide panel"
-            >
-              ⟩ Hide panel
-            </button>
-          </aside>
+          </>
         )}
       </div>
     </div>
