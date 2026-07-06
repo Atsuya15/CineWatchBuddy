@@ -36,6 +36,9 @@ backend/*.dylib
 ehthumbs.db
 Thumbs.db
 
+# Backend runtime SQLite database
+src/server/*.db
+
 # Logs
 *.log
 logs/

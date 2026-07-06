@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { websocketManager } from '../utils/websocketManager'
 
 const ChatPanel = ({ roomId, username }) => {
   const [messages, setMessages] = useState([])
@@ -64,19 +65,20 @@ const ChatPanel = ({ roomId, username }) => {
             }
             break
           case 'participant-left':
-            // Add system message for leaving participant (only once)
-            if (data.data && data.data.participant) {
-              const systemMessage = {
-                id: `system-${data.data.participant.id}-left`,
-                username: 'System',
-                content: `${data.data.participant.username} left the room`,
-                timestamp: new Date().toISOString(),
-                type: 'system'
+            // Add system message for leaving participant.
+            // Server sends { username }; older shape was { participant: {...} }.
+            {
+              const leftName = data.data?.username || data.data?.participant?.username
+              if (leftName) {
+                const systemMessage = {
+                  id: `system-${leftName}-left-${Date.now()}`,
+                  username: 'System',
+                  content: `${leftName} left the room`,
+                  timestamp: new Date().toISOString(),
+                  type: 'system'
+                }
+                setMessages(prev => [...prev, systemMessage])
               }
-              setMessages(prev => {
-                const exists = prev.some(msg => msg.id === systemMessage.id)
-                return exists ? prev : [...prev, systemMessage]
-              })
             }
             break
         }
@@ -108,13 +110,8 @@ const ChatPanel = ({ roomId, username }) => {
 
     console.log('💬 Sending chat message:', message)
 
-    // Send message via shared WebSocket
-    window.dispatchEvent(new CustomEvent('cinewatchbuddy-send', {
-      detail: {
-        type: 'chat-message',
-        data: message
-      }
-    }))
+    // Send message directly over the shared WebSocket connection.
+    websocketManager.send('chat-message', message)
 
     // Don't add to local messages - let the WebSocket response handle it
     // This prevents duplicate messages

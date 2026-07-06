@@ -35,7 +35,7 @@ const LandingPage = () => {
 
       if (data.success) {
         // Store username in localStorage
-        localStorage.setItem('cinebuddy_username', username.trim())
+        localStorage.setItem('cinewatchbuddy_username', username.trim())
         // Navigate to room page
         navigate(`/room/${data.roomId}`)
       } else {
@@ -82,7 +82,7 @@ const LandingPage = () => {
 
       if (data.success) {
         // Store username in localStorage
-        localStorage.setItem('cinebuddy_username', username.trim())
+        localStorage.setItem('cinewatchbuddy_username', username.trim())
         // Navigate to room page
         navigate(`/room/${roomId.trim()}`)
       } else {
@@ -98,7 +98,7 @@ const LandingPage = () => {
 
   // Load username from localStorage on mount
   React.useEffect(() => {
-    const savedUsername = localStorage.getItem('cinebuddy_username')
+    const savedUsername = localStorage.getItem('cinewatchbuddy_username')
     if (savedUsername) {
       setUsername(savedUsername)
     }

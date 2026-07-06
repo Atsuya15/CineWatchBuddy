@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: '../dist',
+    // Go serves static files from src/web/dist (http.Dir("../web/dist")); build there.
+    outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
       output: {
@@ -17,9 +18,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/ws': 'http://172.20.156.8:8080',
+      '/ws': {
+        target: 'http://localhost:8080',
+        ws: true
+      },
       '/api': {
-        target: 'http://172.20.156.8:8080',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       }
