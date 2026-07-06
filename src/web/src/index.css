@@ -21,13 +21,6 @@ body {
   flex-direction: column;
 }
 
-/* Floating cats on the landing page */
-@keyframes cwb-float {
-  0%   { transform: translateY(0) rotate(-8deg); }
-  50%  { transform: translateY(-26px) rotate(8deg); }
-  100% { transform: translateY(0) rotate(-8deg); }
-}
-
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
