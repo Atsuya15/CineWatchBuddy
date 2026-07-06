@@ -1,4 +1,4 @@
-// CineBuddy WebRTC Signaling Component
+// CineWatchBuddy WebRTC Signaling Component
 class WebRTCSignaling {
     constructor() {
         this.localStream = null;
@@ -23,7 +23,7 @@ class WebRTCSignaling {
             // Load TURN server config from storage or environment
             const result = await chrome.storage.local.get(['turnServers', 'cinebuddyConfig']);
             
-            // Check for TURN servers in CineBuddy config
+            // Check for TURN servers in CineWatchBuddy config
             if (result.cinebuddyConfig?.turnServers) {
                 this.iceServers.iceServers.push(...result.cinebuddyConfig.turnServers);
                 return;
@@ -306,7 +306,7 @@ class WebRTCSignaling {
     createVideoCallUI() {
         // Create video call overlay
         const overlay = document.createElement('div');
-        overlay.id = 'cinebuddy-video-call';
+        overlay.id = 'cinewatchbuddy-video-call';
         overlay.style.cssText = `
             position: fixed;
             top: 20px;
@@ -348,7 +348,7 @@ class WebRTCSignaling {
     }
 
     hideVideoCallUI() {
-        const overlay = document.getElementById('cinebuddy-video-call');
+        const overlay = document.getElementById('cinewatchbuddy-video-call');
         if (overlay) {
             overlay.remove();
         }

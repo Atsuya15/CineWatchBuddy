@@ -100,7 +100,7 @@ const LandingPage = () => {
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="card w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold mb-2">🎬 CineBuddy</h1>
+          <h1 className="text-4xl font-bold mb-2">🎬 CineWatchBuddy</h1>
           <p className="text-gray-400">Watch videos together with friends</p>
         </div>
 

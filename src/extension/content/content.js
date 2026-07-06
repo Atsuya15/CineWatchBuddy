@@ -52,7 +52,7 @@ class CineBuddyContentScript {
         }
         
         // Remove video indicators
-        document.querySelectorAll('.cinebuddy-video-indicator').forEach(el => el.remove());
+        document.querySelectorAll('.cinewatchbuddy-video-indicator').forEach(el => el.remove());
         
         // Clear video elements
         this.videoElements.clear();
@@ -211,11 +211,11 @@ class CineBuddyContentScript {
         // Add a small indicator to show video is detected
         // Avoid injecting into DRM overlays or protected content
         if (video.parentNode && 
-            !video.parentNode.querySelector('.cinebuddy-video-indicator') &&
+            !video.parentNode.querySelector('.cinewatchbuddy-video-indicator') &&
             !this.isDRMOverlay(video.parentNode)) {
             try {
                 const indicator = document.createElement('div');
-                indicator.className = 'cinebuddy-video-indicator';
+                indicator.className = 'cinewatchbuddy-video-indicator';
                 indicator.textContent = '🎬 CineWatchBuddy Ready';
                 video.parentNode.style.position = 'relative';
                 video.parentNode.appendChild(indicator);
@@ -363,9 +363,9 @@ class CineBuddyContentScript {
     }
 
     updateSyncStatus(status) {
-        const statusElement = document.querySelector('.cinebuddy-sync-status');
+        const statusElement = document.querySelector('.cinewatchbuddy-sync-status');
         if (statusElement) {
-            statusElement.className = `cinebuddy-sync-status ${status}`;
+            statusElement.className = `cinewatchbuddy-sync-status ${status}`;
             statusElement.textContent = status === 'syncing' ? 'Syncing...' : 
                                       status === 'synced' ? 'Synced' : 'Error';
         }
@@ -579,7 +579,7 @@ class CineBuddyContentScript {
     createOverlay() {
         // Create overlay container
         const overlay = document.createElement('div');
-        overlay.id = 'cinebuddy-overlay';
+        overlay.id = 'cinewatchbuddy-overlay';
         overlay.style.cssText = `
             position: fixed;
             top: 20px;
@@ -601,19 +601,19 @@ class CineBuddyContentScript {
         overlay.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3 style="margin: 0; font-size: 16px;">🎬 CineWatchBuddy</h3>
-                <button id="cinebuddy-close" style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;">×</button>
+                <button id="cinewatchbuddy-close" style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;">×</button>
             </div>
-            <div id="cinebuddy-content">
-                <div id="cinebuddy-status">Not connected</div>
-                <div id="cinebuddy-participants"></div>
-                <div id="cinebuddy-chat"></div>
+            <div id="cinewatchbuddy-content">
+                <div id="cinewatchbuddy-status">Not connected</div>
+                <div id="cinewatchbuddy-participants"></div>
+                <div id="cinewatchbuddy-chat"></div>
             </div>
         `;
         
         document.body.appendChild(overlay);
         
         // Close button handler
-        document.getElementById('cinebuddy-close').addEventListener('click', () => {
+        document.getElementById('cinewatchbuddy-close').addEventListener('click', () => {
             overlay.style.display = 'none';
         });
         
@@ -624,11 +624,11 @@ class CineBuddyContentScript {
     }
 
     updateOverlay(data) {
-        const overlay = document.getElementById('cinebuddy-overlay');
+        const overlay = document.getElementById('cinewatchbuddy-overlay');
         if (!overlay) return;
         
-        const statusEl = document.getElementById('cinebuddy-status');
-        const participantsEl = document.getElementById('cinebuddy-participants');
+        const statusEl = document.getElementById('cinewatchbuddy-status');
+        const participantsEl = document.getElementById('cinewatchbuddy-participants');
         
         if (statusEl) {
             statusEl.textContent = data.status || 'Connected';

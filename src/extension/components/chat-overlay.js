@@ -1,4 +1,4 @@
-// CineBuddy Chat Overlay Component
+// CineWatchBuddy Chat Overlay Component
 class ChatOverlay {
     constructor() {
         this.messages = [];
@@ -23,7 +23,7 @@ class ChatOverlay {
     createOverlay() {
         // Create main overlay container
         const overlay = document.createElement('div');
-        overlay.id = 'cinebuddy-chat-overlay';
+        overlay.id = 'cinewatchbuddy-chat-overlay';
         overlay.style.cssText = `
             position: fixed;
             top: 20px;
@@ -57,7 +57,7 @@ class ChatOverlay {
             
             <div class="chat-messages" id="chat-messages">
                 <div class="welcome-message">
-                    <p>Welcome to CineBuddy chat! 🎬</p>
+                    <p>Welcome to CineWatchBuddy chat! 🎬</p>
                     <p>Start watching together and chat with your friends.</p>
                 </div>
             </div>
@@ -374,7 +374,7 @@ class ChatOverlay {
     }
 
     show() {
-        const overlay = document.getElementById('cinebuddy-chat-overlay');
+        const overlay = document.getElementById('cinewatchbuddy-chat-overlay');
         if (overlay) {
             overlay.style.display = 'block';
             this.isVisible = true;
@@ -383,7 +383,7 @@ class ChatOverlay {
     }
 
     hide() {
-        const overlay = document.getElementById('cinebuddy-chat-overlay');
+        const overlay = document.getElementById('cinewatchbuddy-chat-overlay');
         if (overlay) {
             overlay.style.display = 'none';
             this.isVisible = false;
@@ -416,7 +416,7 @@ class ChatOverlay {
     }
 
     toggleMinimize() {
-        const overlay = document.getElementById('cinebuddy-chat-overlay');
+        const overlay = document.getElementById('cinewatchbuddy-chat-overlay');
         const minimizeBtn = document.getElementById('chat-minimize');
         
         if (overlay.classList.contains('chat-minimized')) {
@@ -567,7 +567,7 @@ class ChatOverlay {
         if (messagesContainer) {
             messagesContainer.innerHTML = `
                 <div class="welcome-message">
-                    <p>Welcome to CineBuddy chat! 🎬</p>
+                    <p>Welcome to CineWatchBuddy chat! 🎬</p>
                     <p>Start watching together and chat with your friends.</p>
                 </div>
             `;

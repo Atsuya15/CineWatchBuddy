@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"cinebuddy-backend/database"
+	"cinewatchbuddy-backend/database"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/cors"
@@ -892,7 +892,7 @@ func getBool(data map[string]interface{}, key string) bool {
 func main() {
 	config := &Config{
 		Port:            getEnv("PORT", "8080"),
-		DatabasePath:    getEnv("DATABASE_PATH", "./cinebuddy.db"),
+		DatabasePath:    getEnv("DATABASE_PATH", "./cinewatchbuddy.db"),
 		MaxRooms:        100,
 		MaxParticipants: 15,
 		CleanupInterval: 5 * time.Minute,

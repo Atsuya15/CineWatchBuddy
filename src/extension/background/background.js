@@ -1,4 +1,4 @@
-// CineBuddy Background Service Worker - Single WebSocket Controller
+// CineWatchBuddy Background Service Worker - Single WebSocket Controller
 class CineBuddyBackground {
     constructor() {
         this.ws = null;
@@ -57,7 +57,7 @@ class CineBuddyBackground {
     setupEventListeners() {
         // Handle extension installation
         chrome.runtime.onInstalled.addListener((details) => {
-            console.log('CineBuddy extension installed:', details);
+            console.log('CineWatchBuddy extension installed:', details);
         });
 
         // Handle tab updates for video detection
@@ -86,7 +86,7 @@ class CineBuddyBackground {
             this.ws = new WebSocket(this.config.backendUrl);
             
             this.ws.onopen = () => {
-                console.log('Background: Connected to CineBuddy backend');
+                console.log('Background: Connected to CineWatchBuddy backend');
                 this.reconnectAttempts = 0;
                 this.updateConnectionStatus('connected');
             };

@@ -1,4 +1,4 @@
-// CineBuddy Popup - Simplified to use background script messaging
+// CineWatchBuddy Popup - Simplified to use background script messaging
 class CineBuddyPopup {
     constructor() {
         this.state = {
@@ -314,7 +314,7 @@ class CineBuddyPopup {
         const popupHTML = `
             <div class="popup-container">
                 <div class="header">
-                    <h1>🎬 CineBuddy</h1>
+                    <h1>🎬 CineWatchBuddy</h1>
                     <div class="status-indicator ${connectionStatus}">
                         ${connectionStatus === 'connected' ? '🟢' : connectionStatus === 'connecting' ? '🟡' : '🔴'}
                         ${connectionStatus.toUpperCase()}

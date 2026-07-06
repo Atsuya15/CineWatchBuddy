@@ -1,7 +1,7 @@
 // Bridge between the web app and the extension background via content script
 (function() {
-  const WEB_SOURCE = 'cinebuddy-web';
-  const EXT_SOURCE = 'cinebuddy-extension';
+  const WEB_SOURCE = 'cinewatchbuddy-web';
+  const EXT_SOURCE = 'cinewatchbuddy-extension';
 
   // Listen for messages from the web page and forward to background
   window.addEventListener('message', async (event) => {

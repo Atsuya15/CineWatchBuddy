@@ -1,4 +1,4 @@
-// CineBuddy Configuration Manager
+// CineWatchBuddy Configuration Manager
 class ConfigManager {
     constructor() {
         this.defaultConfig = {
@@ -38,14 +38,14 @@ class ConfigManager {
         const hostname = window.location.hostname;
         
         // Production overrides
-        if (hostname === 'cinebuddy.app' || hostname.includes('cinebuddy')) {
-            this.config.backendUrl = 'wss://api.cinebuddy.app/ws';
-            this.config.httpUrl = 'https://api.cinebuddy.app';
+        if (hostname === 'cinewatchbuddy.app' || hostname.includes('cinewatchbuddy')) {
+            this.config.backendUrl = 'wss://api.cinewatchbuddy.app/ws';
+            this.config.httpUrl = 'https://api.cinewatchbuddy.app';
         }
         // Staging overrides
         else if (hostname.includes('staging')) {
-            this.config.backendUrl = 'wss://staging-api.cinebuddy.app/ws';
-            this.config.httpUrl = 'https://staging-api.cinebuddy.app';
+            this.config.backendUrl = 'wss://staging-api.cinewatchbuddy.app/ws';
+            this.config.httpUrl = 'https://staging-api.cinewatchbuddy.app';
         }
     }
 

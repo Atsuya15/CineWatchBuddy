@@ -6,12 +6,12 @@ const ExtensionIntegration = ({ roomId, username, onExtensionReady, onVideoSync,
   const [extensionSite, setExtensionSite] = useState('')
 
   useEffect(() => {
-    // Check if CineBuddy extension is available
+    // Check if CineWatchBuddy extension is available
     checkExtensionAvailability()
     
     // Listen for extension messages
     const handleMessage = (event) => {
-      if (event.data && event.data.source === 'cinebuddy-extension' && event.data.action) {
+      if (event.data && event.data.source === 'cinewatchbuddy-extension' && event.data.action) {
         switch (event.data.action) {
           case 'extensionReady':
             handleExtensionReady(event.data.payload)
@@ -43,13 +43,13 @@ const ExtensionIntegration = ({ roomId, username, onExtensionReady, onVideoSync,
     return new Promise((resolve) => {
       const correlationId = `${Date.now()}-${Math.random()}`
       const listener = (event) => {
-        if (!event.data || event.data.source !== 'cinebuddy-extension') return
+        if (!event.data || event.data.source !== 'cinewatchbuddy-extension') return
         if (event.data.correlationId !== correlationId) return
         window.removeEventListener('message', listener)
         resolve(event.data.payload)
       }
       window.addEventListener('message', listener)
-      window.postMessage({ source: 'cinebuddy-web', correlationId, payload: message }, '*')
+      window.postMessage({ source: 'cinewatchbuddy-web', correlationId, payload: message }, '*')
     })
   }
 

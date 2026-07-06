@@ -1,7 +1,7 @@
 {
-  "name": "cinebuddy-frontend",
+  "name": "cinewatchbuddy-frontend",
   "version": "1.0.0",
-  "description": "CineBuddy Web Frontend - Watch Together Platform",
+  "description": "CineWatchBuddy Web Frontend - Watch Together Platform",
   "type": "module",
   "scripts": {
     "dev": "vite",

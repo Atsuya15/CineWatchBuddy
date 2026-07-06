@@ -1,4 +1,4 @@
-module cinebuddy-backend
+module cinewatchbuddy-backend
 
 go 1.21
 
