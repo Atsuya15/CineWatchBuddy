@@ -448,15 +448,34 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WebSocket client disconnected: %s", clientID)
 }
 
-// handleParticipantDeparture waits out a grace period and only marks a user as
-// left if they have not reconnected to the room in the meantime.
+// Reconnect grace windows: a regular participant only needs long enough to
+// smooth over a brief drop, but the host gets a long window so a flaky
+// connection doesn't tear the whole room down — the room only ends if the host
+// stays gone for the full window.
+const (
+	participantGrace = 3 * time.Second
+	hostGrace        = 10 * time.Minute
+)
+
+// handleParticipantDeparture waits out the grace window and only acts if the
+// user has not reconnected to the room in the meantime.
 func (s *Server) handleParticipantDeparture(roomID, username string) {
-	time.Sleep(3 * time.Second)
+	// Pick the grace window up front based on whether this user is the host.
+	s.mutex.RLock()
+	room0, ok0 := s.rooms[roomID]
+	wasHost := ok0 && username == room0.HostUsername
+	s.mutex.RUnlock()
+
+	grace := participantGrace
+	if wasHost {
+		grace = hostGrace
+	}
+	time.Sleep(grace)
 
 	s.mutex.Lock()
 	for cid, uname := range s.clientUsers {
 		if uname == username && s.clientRooms[cid] == roomID {
-			// User reconnected during the grace window — nothing to announce.
+			// Reconnected during the grace window — nothing to announce.
 			s.mutex.Unlock()
 			return
 		}
@@ -476,7 +495,7 @@ func (s *Server) handleParticipantDeparture(roomID, username string) {
 	}
 	s.mutex.Unlock()
 
-	// If the host is gone, the room ends for everyone.
+	// If the host never came back, the room ends for everyone.
 	if isHost {
 		s.endRoom(roomID, "The host left the room")
 		return
