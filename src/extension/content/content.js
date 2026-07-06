@@ -23,6 +23,10 @@ class CineBuddyContentScript {
         this.lastVideoSyncTime = 0;
         this.videoSyncCount = 0;
         this.videoSyncResetTime = 0;
+        // Echo guard: while applying an incoming sync we briefly suppress
+        // outgoing broadcasts so the play/pause/seek we trigger locally is not
+        // re-sent back to the room (which would cause an echo loop).
+        this._applyingRemoteUntil = 0;
         
                 CineBuddyContentScript.setupIdleCallbackPolyfill();
         this.init();
@@ -36,6 +40,14 @@ class CineBuddyContentScript {
         this.initializeChat();
         this.setupCleanup();
         this.checkRoomStatus();
+    }
+
+    setupEventListeners() {
+        // Reserved for page-level listeners. Video element events are wired in
+        // setupVideoListeners(); teardown is handled in setupCleanup().
+        // NOTE: this method used to be missing entirely, which threw during
+        // init() and prevented setupMessageHandlers() from ever registering the
+        // incoming-sync handler — so remote play/pause/seek were never applied.
     }
 
     setupCleanup() {
@@ -64,17 +76,17 @@ class CineBuddyContentScript {
     }
 
     initializeChat() {
-        // Load chat overlay component
-        if (typeof ChatOverlay !== 'undefined') {
-            this.chatOverlay = new ChatOverlay();
-        } else {
-            // Load chat overlay script if not already loaded
-            const script = document.createElement('script');
-            script.src = chrome.runtime.getURL('components/chat-overlay.js');
-            script.onload = () => {
+        // The chat overlay is optional and independent of video sync. When the
+        // component class is available in this (isolated) world we use it;
+        // otherwise we skip it. Injecting it as a page <script> would run it in
+        // the main world where the content script can't reference it, so we do
+        // not attempt that (it previously threw "ChatOverlay is not defined").
+        try {
+            if (typeof ChatOverlay !== 'undefined') {
                 this.chatOverlay = new ChatOverlay();
-            };
-            document.head.appendChild(script);
+            }
+        } catch (e) {
+            console.debug('Chat overlay unavailable:', e);
         }
     }
 
@@ -284,8 +296,15 @@ class CineBuddyContentScript {
     }
 
     handleVideoEvent(eventType, video) {
-        if (!this.isHost || !this.roomId) return;
-        
+        // Any participant may drive playback (like the web client). We no longer
+        // gate on isHost — instead we suppress events that were caused by us
+        // applying a remote sync, to avoid echo loops.
+        if (Date.now() < this._applyingRemoteUntil) return;
+
+        // Don't broadcast raw timeupdate ticks — they create cross-jitter and
+        // echo noise. Play/pause/seek carry the position we actually need.
+        if (eventType === 'timeupdate') return;
+
         // Guard against videos that aren't ready
         if (video.readyState < 1) {
             return;
@@ -472,74 +491,59 @@ class CineBuddyContentScript {
     }
 
     handleVideoSync(data) {
-        // Phase 3: Enhanced sync for web client integration
-        if (this.isHost && data.source !== 'web-client') return; // Don't sync if we're the host (unless from web client)
-        
-        const video = this.findVideoById(data.videoId) || this.currentVideo;
+        const video = this.findVideoById(data.videoId) || this.currentVideo || Array.from(this.videoElements)[0];
         if (!video) return;
-        
-        // Check if we're on the same platform and video (skip for web client)
+
+        // Check if we're on the same platform (skip check for web-client origin)
         if (data.platform && data.platform !== this.getCurrentPlatform() && data.source !== 'web-client') {
             console.warn('Platform mismatch, skipping sync');
             return;
         }
-        
+
+        // State-based apply. The server broadcasts the desired video *state*
+        // (paused, currentTime, volume, playbackRate) rather than an event type,
+        // so we reconcile our element to that state — mirroring the web client.
+        //
+        // IMPORTANT: only arm the echo guard when we actually CHANGE the video.
+        // The server also echoes our own broadcasts back to us; applying a
+        // no-op self-echo must NOT arm the guard, or it would suppress our next
+        // genuine action (e.g. a pause issued right after we played).
+        let changed = false;
         try {
-            // Apply sync based on event type
-            switch (data.type) {
-                case 'play':
-                    if (video.paused) {
-                        video.play().then(() => {
-                            this.updateSyncStatus('synced');
-                        }).catch(error => {
-                            console.error('Error playing video:', error);
-                            this.updateSyncStatus('error');
-                        });
-                    }
-                    break;
-                    
-                case 'pause':
-                    if (!video.paused) {
-                        video.pause();
-                        this.updateSyncStatus('synced');
-                    }
-                    break;
-                    
-                case 'seeked':
-                case 'seeking':
-                    const timeDiff = Math.abs(video.currentTime - data.currentTime);
-                    if (timeDiff > 0.5) {
-                        video.currentTime = data.currentTime;
-                        this.updateSyncStatus('synced');
-                    }
-                    break;
-                    
-                case 'volumechange':
-                    const volumeDiff = Math.abs(video.volume - data.volume);
-                    if (volumeDiff > 0.01) {
-                        video.volume = data.volume;
-                        this.updateSyncStatus('synced');
-                    }
-                    break;
-                    
-                case 'ratechange':
-                    if (video.playbackRate !== data.playbackRate) {
-                        video.playbackRate = data.playbackRate;
-                        this.updateSyncStatus('synced');
-                    }
-                    break;
-                    
-                case 'timeupdate':
-                    // Only sync if there's a significant difference
-                    const timeUpdateDiff = Math.abs(video.currentTime - data.currentTime);
-                    if (timeUpdateDiff > 1.0) {
-                        video.currentTime = data.currentTime;
-                        this.updateSyncStatus('synced');
-                    }
-                    break;
+            if (typeof data.currentTime === 'number' && isFinite(data.currentTime)) {
+                if (Math.abs(video.currentTime - data.currentTime) > 0.75) {
+                    try { video.currentTime = data.currentTime; changed = true; } catch (e) { /* non-seekable stream */ }
+                }
+            }
+
+            if (typeof data.paused === 'boolean') {
+                if (data.paused && !video.paused) {
+                    video.pause();
+                    changed = true;
+                } else if (!data.paused && video.paused) {
+                    video.play().catch(() => { /* autoplay/stream restrictions */ });
+                    changed = true;
+                }
+            }
+
+            if (typeof data.volume === 'number' && Math.abs(video.volume - data.volume) > 0.05) {
+                video.volume = data.volume;
+                changed = true;
+            }
+
+            if (typeof data.playbackRate === 'number' && data.playbackRate > 0 &&
+                video.playbackRate !== data.playbackRate) {
+                video.playbackRate = data.playbackRate;
+                changed = true;
+            }
+
+            if (changed) {
+                // Suppress the local media events our apply will trigger.
+                this._applyingRemoteUntil = Date.now() + 500;
+                this.updateSyncStatus('synced');
             }
         } catch (error) {
-            console.error('Error handling video sync:', error);
+            console.error('Error applying video sync:', error);
             this.updateSyncStatus('error');
         }
     }
@@ -691,7 +695,10 @@ class CineBuddyContentScript {
 
     handleRoomUpdate(roomData) {
         this.currentRoom = roomData;
-        this.isHost = roomData.participants?.[0]?.id === this.username;
+        this.roomId = roomData?.id || this.roomId;
+        if (!this.currentVideo) {
+            this.currentVideo = Array.from(this.videoElements)[0] || null;
+        }
         this.updateSyncStatus('ready');
     }
 

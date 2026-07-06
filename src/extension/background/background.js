@@ -145,7 +145,18 @@ class CineBuddyBackground {
                 break;
                 
             case 'videoSync':
+            case 'syncVideo': // content script uses this action name
                 this.handleVideoSync(message.data);
+                sendResponse({ success: true });
+                break;
+
+            case 'videoDetected':
+                // Informational ping from a content script; nothing to forward.
+                sendResponse({ success: true });
+                break;
+
+            case 'extensionReady':
+                // Content script announcing DRM-page readiness; ack only.
                 sendResponse({ success: true });
                 break;
                 
@@ -213,14 +224,16 @@ class CineBuddyBackground {
             if (data.success && data.roomId) {
                 this.currentRoom = data.room;
                 await chrome.storage.local.set({ currentRoom: this.currentRoom });
-                
-                // Send join-room WebSocket message
+
+                // Send join-room WebSocket message (server reads fields from `data`)
                 this.ws.send(JSON.stringify({
                     type: 'join-room',
-                    roomId: data.roomId,
-                    username: this.username
+                    data: {
+                        roomId: data.roomId,
+                        username: this.username
+                    }
                 }));
-                
+
                 sendResponse({ success: true, room: data.room, shareLink: data.shareLink });
             } else {
                 sendResponse({ success: false, error: data.message || 'Room creation failed' });
@@ -235,19 +248,21 @@ class CineBuddyBackground {
         try {
             this.ws.send(JSON.stringify({
                 type: 'join-room',
-                roomId: roomId,
-                username: this.username
+                data: {
+                    roomId: roomId,
+                    username: this.username
+                }
             }));
-            
+
             // Wait for room-joined response
             const originalOnMessage = this.ws.onmessage;
             this.ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'room-joined') {
-                        this.currentRoom = data.data;
+                        this.currentRoom = data.data?.room || data.data;
                         chrome.storage.local.set({ currentRoom: this.currentRoom });
-                        sendResponse({ success: true, room: data.data });
+                        sendResponse({ success: true, room: this.currentRoom });
                         this.ws.onmessage = originalOnMessage; // Restore original handler
                         return;
                     }
@@ -262,11 +277,22 @@ class CineBuddyBackground {
         }
     }
 
+    // currentRoom may be a room object (create/join) or a roomId string
+    // (web-client path). Normalize to the id string the server expects.
+    getRoomId() {
+        if (!this.currentRoom) return null;
+        return typeof this.currentRoom === 'string' ? this.currentRoom : this.currentRoom.id;
+    }
+
     handleVideoSync(data) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
                 type: 'video-sync',
-                data: data
+                data: {
+                    ...data,
+                    roomId: this.getRoomId(),
+                    username: this.username
+                }
             }));
         }
     }
@@ -275,7 +301,11 @@ class CineBuddyBackground {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
                 type: 'chat-message',
-                data: data
+                data: {
+                    ...data,
+                    roomId: this.getRoomId(),
+                    username: this.username
+                }
             }));
         }
     }

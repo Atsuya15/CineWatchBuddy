@@ -223,10 +223,32 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomID := generateRoomID()
+	// If the creator supplies a room name, use a friendly slug of it as the
+	// room ID so others can join by an easy-to-share name (e.g. "movie-night")
+	// instead of the raw room_<nanos> id. Fall back to a random id.
+	roomID := ""
+	if req.RoomName != "" {
+		if slug := slugify(req.RoomName); slug != "" {
+			s.mutex.RLock()
+			_, taken := s.rooms[slug]
+			s.mutex.RUnlock()
+			if taken {
+				slug = fmt.Sprintf("%s-%d", slug, time.Now().UnixNano()%10000)
+			}
+			roomID = slug
+		}
+	}
+	if roomID == "" {
+		roomID = generateRoomID()
+	}
+
 	roomName := req.RoomName
 	if roomName == "" {
-		roomName = fmt.Sprintf("Room %s", roomID[:8])
+		shortID := roomID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		roomName = fmt.Sprintf("Room %s", shortID)
 	}
 
 	now := time.Now()
@@ -1022,6 +1044,34 @@ func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleExtTest serves a minimal page with an HTML5 <video> so the Chrome
+// extension's content script can be exercised locally (stand-in for a DRM site).
+func (s *Server) handleExtTest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, extTestHTML)
+}
+
+const extTestHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>CineWatchBuddy Extension Test Page</title>
+<style>body{background:#111;color:#eee;font-family:sans-serif;text-align:center;padding:24px}
+video{width:480px;max-width:90vw;background:#000;border-radius:8px}</style></head>
+<body>
+<h2>CineWatchBuddy — Extension Test Video</h2>
+<p>Stand-in for a DRM streaming page. The content script attaches to the &lt;video&gt; below.</p>
+<video id="testVideo" playsinline></video>
+<script>
+  // Use a fake/real camera stream so play/pause reflect real element state.
+  const v = document.getElementById('testVideo');
+  navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    .then(s => { v.srcObject = s; })
+    .catch(() => { /* no camera: element still present for listener tests */ });
+  // Expose simple controls for automated testing.
+  window.cwbPlay = () => v.play();
+  window.cwbPause = () => v.pause();
+  window.cwbState = () => ({ paused: v.paused, currentTime: v.currentTime });
+</script>
+</body></html>`
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status": "healthy",
@@ -1036,6 +1086,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // Utility functions
 func generateRoomID() string {
 	return fmt.Sprintf("room_%d", time.Now().UnixNano())
+}
+
+// slugify turns a human room name into a URL/room-id friendly slug.
+// "Movie Night!" -> "movie-night"
+func slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastDash = false
+		case r == ' ' || r == '-' || r == '_':
+			if b.Len() > 0 && !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func generateParticipantID() string {
@@ -1171,6 +1242,7 @@ func main() {
 	http.HandleFunc("/join-room", server.handleJoinRoom)
 	http.HandleFunc("/join", server.handleJoin)
 	http.HandleFunc("/rooms", server.handleRooms)
+	http.HandleFunc("/ext-test", server.handleExtTest)
 	http.HandleFunc("/ws", server.handleWebSocket)
 	http.HandleFunc("/health", server.handleHealth)
 

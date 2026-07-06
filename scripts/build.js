@@ -41,33 +41,16 @@ if (!fs.existsSync(distDir)) {
     fs.mkdirSync(distDir, { recursive: true });
 }
 
-// Simple minification for JS files
+// NOTE: The previous regex "minifier" stripped `//` line comments in a way that
+// also destroyed `//` inside string literals such as `ws://localhost:8080` — which
+// corrupted the built scripts. For an unpacked dev extension the size win isn't
+// worth that risk, so we copy JS/CSS verbatim.
 function minifyJS(content) {
-    // Check if we're in development mode
-    if (process.env.NODE_ENV === 'development') {
-        return content; // Keep original formatting for easier debugging
-    }
-    
-    return content
-        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
-        .replace(/\/\/.*$/gm, '') // Remove line comments
-        .replace(/\s+/g, ' ') // Collapse whitespace
-        .replace(/\s*([{}();,=])\s*/g, '$1') // Remove spaces around operators
-        .trim();
+    return content;
 }
 
-// Simple minification for CSS files
 function minifyCSS(content) {
-    // Check if we're in development mode
-    if (process.env.NODE_ENV === 'development') {
-        return content; // Keep original formatting for easier debugging
-    }
-    
-    return content
-        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove comments
-        .replace(/\s+/g, ' ') // Collapse whitespace
-        .replace(/\s*([{}:;,>+~])\s*/g, '$1') // Remove spaces around selectors
-        .trim();
+    return content;
 }
 
 // Copy extension files to dist

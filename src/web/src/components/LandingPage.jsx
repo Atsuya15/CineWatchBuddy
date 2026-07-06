@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 const LandingPage = () => {
   const [username, setUsername] = useState('')
+  const [roomName, setRoomName] = useState('')
   const [roomId, setRoomId] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
@@ -24,7 +25,7 @@ const LandingPage = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username: username.trim() })
+        body: JSON.stringify({ username: username.trim(), roomName: roomName.trim() })
       })
 
       if (!response.ok) {
@@ -36,7 +37,7 @@ const LandingPage = () => {
       if (data.success) {
         // Store username in localStorage
         localStorage.setItem('cinewatchbuddy_username', username.trim())
-        // Navigate to room page
+        // Navigate to room page (data.roomId is the friendly slug when a name was given)
         navigate(`/room/${data.roomId}`)
       } else {
         setError(data.message || 'Failed to create room')
@@ -132,6 +133,20 @@ const LandingPage = () => {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-300">Room name <span className="text-gray-600 font-normal">(optional)</span></label>
+              <input
+                type="text"
+                value={roomName}
+                onChange={(e) => setRoomName(e.target.value)}
+                placeholder="e.g. movie-night"
+                className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-gray-800 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                maxLength={40}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateRoom() }}
+              />
+              <p className="mt-1 text-xs text-gray-600">Friends can join with this name instead of a long ID.</p>
+            </div>
+
             <button
               onClick={handleCreateRoom}
               disabled={isCreating || isJoining}
@@ -151,7 +166,7 @@ const LandingPage = () => {
                 type="text"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
-                placeholder="Room ID"
+                placeholder="Room name or ID"
                 className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
                 onKeyDown={(e) => { if (e.key === 'Enter') handleJoinRoom() }}
               />

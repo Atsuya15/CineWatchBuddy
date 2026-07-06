@@ -168,26 +168,29 @@ class CineBuddyPopup {
     }
 
     handleUsernameChange = (e) => {
+        // Update value without a full re-render so the input keeps focus while typing.
         const username = e.target.value;
-        this.setState({ username });
-        
+        this.state.username = username;
+
         // Debounce username validation
         if (this.debounceTimeout) {
             clearTimeout(this.debounceTimeout);
         }
-        
+
         this.debounceTimeout = setTimeout(() => {
+            const wasLoggedIn = this.state.isLoggedIn;
             if (username.trim().length >= 2) {
-                this.setState({ isLoggedIn: true });
                 this.sendMessage({ action: 'initUser', username: username.trim() });
-            } else {
+                if (!wasLoggedIn) this.setState({ isLoggedIn: true });
+            } else if (wasLoggedIn) {
                 this.setState({ isLoggedIn: false });
             }
-        }, 300);
+        }, 400);
     };
 
     handleRoomIdChange = (e) => {
-        this.setState({ roomId: e.target.value });
+        // Track value without re-render to preserve focus.
+        this.state.roomId = e.target.value;
     };
 
     handleCreateRoom = async () => {
@@ -335,9 +338,9 @@ class CineBuddyPopup {
                 ` : ''}
 
                 ${isLoggedIn && !currentRoom ? `
-                    <div class="room-section">
-                        <button 
-                            id="createRoom" 
+                    <div class="room-section active">
+                        <button
+                            id="createRoom"
                             class="btn btn-primary"
                             ${isCreatingRoom ? 'disabled' : ''}
                         >
