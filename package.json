@@ -5,12 +5,14 @@
   "main": "index.js",
   "scripts": {
     "build": "node scripts/build.js",
-    "dev": "node scripts/build.js && echo 'Watching for changes...' && nodemon --watch extension --ext js,css,html,json --exec 'npm run build'",
-    "start-backend": "cd backend && go run main.go",
-    "dev-backend": "cd backend && go run main.go",
-    "lint": "eslint extension/**/*.js",
+    "dev": "node scripts/build.js && echo 'Watching for changes...' && nodemon --watch src/extension --ext js,css,html,json --exec 'npm run build'",
+    "start-backend": "cd src/server && go run main.go",
+    "dev-backend": "cd src/server && go run main.go",
+    "start-web": "cd src/web && npm run dev",
+    "build-web": "cd src/web && npm run build",
+    "lint": "eslint src/extension/**/*.js",
     "package": "npm run build && cd dist && zip -r ../cinebuddy-extension.zip .",
-    "install-deps": "npm install && cd backend && go mod tidy",
+    "install-deps": "npm install && cd src/server && go mod tidy && cd ../web && npm install",
     "setup": "npm run install-deps && npm run build"
   },
   "keywords": [

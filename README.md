@@ -1,6 +1,8 @@
-# CineBuddy Extension
+# CineBuddy
 
-A browser extension that enables synchronized video playback across streaming services (Netflix, Hulu, YouTube, etc.) with friends in real-time.
+![CineBuddy](assets/icons/CineBuddyLogo.png)
+
+A browser extension that enables synchronized video playback across streaming services (YouTube,Vimeo etc.) with friends in real-time.
 
 ## Features
 
@@ -20,93 +22,119 @@ A browser extension that enables synchronized video playback across streaming se
 - **Video Calls**: Peer-to-peer WebRTC connections with STUN servers
 - **Cross-Platform**: Seamless integration between web client and extension
 
+## Project Structure
+
+```
+CineBuddy/
+├── src/
+│   ├── extension/          # Chrome Extension (Manifest V3)
+│   │   ├── background/     # Service Worker
+│   │   ├── content/        # Content Scripts
+│   │   ├── popup/          # Extension Popup UI
+│   │   ├── components/     # Shared Components
+│   │   └── manifest.json   # Extension Manifest
+│   ├── web/               # React Web Client
+│   │   ├── src/
+│   │   │   ├── components/ # React Components
+│   │   │   └── main.jsx    # App Entry Point
+│   │   └── package.json    # Frontend Dependencies
+│   └── server/            # Go Backend Server
+│       ├── main.go        # WebSocket Server
+│       └── go.mod         # Go Dependencies
+├── assets/
+│   └── icons/            # Logo and Assets
+├── scripts/
+│   └── build.js          # Build Script
+└── dist/                 # Built Extension (Generated)
+```
+
 ### System Architecture Diagram
 
 ```
-                              ┌────────────────────────────────────────────┐
-                              │                 Browser                    │
-                              │────────────────────────────────────────────│
-                              │          Chrome / Firefox (MV3)            │
-                              └────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    CineBuddy Platform                                            │
+│                              (Web Client + Extension + Backend)                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
                                             │
                                             │
-                                            ▼
-        ┌───────────────────────────────────────────────────────────────────────────┐
-        │                        Browser Extension Components                       │
-        └───────────────────────────────────────────────────────────────────────────┘
-                                            │
-                                            │
-         ┌──────────────────────────┬──────────────────────────────┬───────────────────────────┐
-         │                          │                              │                           │
-         ▼                          ▼                              ▼                           ▼
-┌──────────────────────┐   ┌────────────────────────┐     ┌──────────────────────┐    ┌──────────────────────┐
-│ background.js        │   │ content.js             │     │ popup.js             │    │ components/          │
-│ Service Worker       │   │ Injected into site     │     │ Extension popup UI   │    │   chat-overlay.js    │
-│                      │   │ - Detects <video>      │     │ - Create/Join room   │    │   webrtc-signaling.js│
-│ - Manages WS to Go   │   │ - Captures play/pause  │     │ - Handles login      │    │ - P2P media setup    │
-│ - Handles reconnects │   │ - Sends sync via WS    │     │ - Shows room state   │    │ - TURN/STUN mgmt     │
-│ - Broadcasts updates │   │ - Shows overlay & chat │     │ - Calls REST APIs    │    │ - Video call overlay │
-└──────────────────────┘   └────────────────────────┘     └──────────────────────┘    └──────────────────────┘
-         │                          │                               │                           │
-         │                          │                               │                           │
-         │                          │                               │                           │
-         └──────────────────────────┴───────────────┬───────────────┴──────────────┬────────────┘
-                                                    │                              │
-                                                    ▼                              ▼
-                                        ┌────────────────────────────┐  ┌────────────────────────────┐
-                                        │   WebSocket Events         │  │      REST Endpoints        │
-                                        │────────────────────────────│  │────────────────────────────│
-                                        │  /ws                       │  │  /create-room (POST)       │
-                                        │  ↕ video-sync              │  │  /join-room (POST)         │
-                                        │  ↕ chat-message            │  │  /rooms (GET)              │
-                                        │  ↕ webrtc-offer/answer     │  │  /health (GET)             │
-                                        │  ↕ presence updates        │  │                            │
-                                        └─────────────┬──────────────┘  └────────────┬────────────── ┘
-                                                      │                              │
-                                                      │                              │
-                                                      ▼                              ▼
-                            ┌─────────────────────────────────────────────────────────────┐
-                            │                   Go Backend (main.go)                      │
-                            │─────────────────────────────────────────────────────────────│
-                            │ NewServer() initializes:                                    │
-                            │  - rooms map[string]*Room                                   │
-                            │  - clients map[string]*websocket.Conn                       │
-                            │  - rateLimiter, ping checkers                               │
-                            │                                                             │
-                            │ handleWebSocket()  → upgrade & listen per client            │
-                            │ handleCreateRoom() → returns roomId                         │
-                            │ handleJoinRoom()   → joins + broadcasts participant         │
-                            │ broadcastToRoom()  → sends to all WS clients                │
-                            │ handleWebRTC*()    → forwards signaling messages            │
-                            │ startPingPong()    → closes idle connections                │
-                            └────────────┬──────────────────────────────────────────────  ┘
-                                         │
-                                         │   In-memory (no DB)
-                                         ▼
-                           ┌───────────────────────────────────────┐
-                           │  Room Management Structures:          │
-                           │                                       │
-                           │  type Room {                          │
-                           │     ID, Name, Participants[], ...     │
-                           │  }                                    │
-                           │  type Participant { ID, Username, ...}│
-                           └───────────────────────────────────────┘
-                                         │
-                                         ▼
-                              ┌──────────────────────────────────────┐
-                              │  In-memory synchronization only      │
-                              │  No persistent storage (stateless)   │
-                              └──────────────────────────────────────┘
-                                         │
-                                         ▼
-                             ┌─────────────────────────────────────────┐
-                             │    External Deployment Layer (Optional) │
-                             │─────────────────────────────────────────│
-                             │  Nginx / Fly.io / Render proxy          │
-                             │  - Enforces HTTPS / WSS                 │
-                             │  - CORS filtering                       │
-                             │  - Load balancer                        │
-                             └─────────────────────────────────────────┘
+         ┌──────────────────────────────────┼──────────────────────────────────┐
+         │                                  │                                  │
+         ▼                                  ▼                                  ▼
+┌─────────────────────┐          ┌─────────────────────┐          ┌─────────────────────┐
+│   Web Client        │          │  Chrome Extension   │          │   Go Backend        │
+│   (React SPA)       │          │   (Manifest V3)     │          │   (WebSocket)       │
+│                     │          │                     │          │                     │
+│ src/web/            │          │ src/extension/      │          │ src/server/         │
+│ ├── components/     │          │ ├── background/     │          │ ├── main.go         │
+│ ├── App.jsx         │          │ ├── content/        │          │ └── go.mod          │
+│ └── package.json    │          │ ├── popup/          │          │                     │
+│                     │          │ ├── components/     │          │ - Room Management   │
+│ - Video Player      │          │ └── manifest.json   │          │ - WebSocket Server  │
+│ - Chat Panel        │          │                     │          │ - REST API          │
+│ - Video Grid        │          │ - Service Worker    │          │ - WebRTC Signaling  │
+│ - Room Management   │          │ - Content Scripts   │          │ - Chat History      │
+│ - WebRTC Calls      │          │ - DRM Site Support  │          │                     │
+└─────────────────────┘          │ - Video Sync        │          └─────────────────────┘
+         │                       │ - Chat Overlay      │                     │
+         │                       │ - WebRTC Signaling  │                     │
+         │                       └─────────────────────┘                     │
+         │                                │                                  │
+         │                                │                                  │
+         └────────────────────────────────┼──────────────────────────────────┘
+                                          │
+                                          ▼
+                              ┌─────────────────────────────┐
+                              │     Communication Layer     │
+                              │─────────────────────────────│
+                              │                             │
+                              │ WebSocket (ws://localhost)  │
+                              │ ├── video-sync              │
+                              │ ├── chat-message            │
+                              │ ├── webrtc-offer/answer     │
+                              │ ├── participant-joined/left │
+                              │ └── room-update             │
+                              │                             │
+                              │ REST API (http://localhost) │
+                              │ ├── /create-room (POST)     │
+                              │ ├── /join-room (POST)       │
+                              │ ├── /rooms (GET)            │
+                              │ └── /join?room=<id> (GET)   │
+                              └─────────────────────────────┘
+                                          │
+                                          ▼
+                              ┌─────────────────────────────┐
+                              │      Data Management        │
+                              │─────────────────────────────│
+                              │                             │
+                              │ In-Memory Storage:          │
+                              │ ├── rooms map[string]*Room  │
+                              │ ├── clients map[string]*WS  │
+                              │ ├── rateLimiter             │
+                              │ └── ping checkers           │
+                              │                             │
+                              │ Room State:                 │
+                              │ ├── VideoState (current)    │
+                              │ ├── ChatHistory (last 100)  │
+                              │ ├── Participants[]          │
+                              │ └── LastActivity            │
+                              └─────────────────────────────┘
+                                          │
+                                          ▼
+                              ┌─────────────────────────────┐
+                              │    External Integrations    │
+                              │─────────────────────────────│
+                              │                             │
+                              │ WebRTC:                     │
+                              │ ├── STUN Servers (Google)   │
+                              │ ├── TURN Servers (Optional) │
+                              │ └── P2P Video Calls         │
+                              │                             │
+                              │ DRM Platforms:              │
+                              │ ├── Netflix, Disney+        │
+                              │ ├── Amazon Prime, Hulu      │
+                              │ ├── HBO Max, Paramount+     │
+                              │ └── PeacockTV               │
+                              └─────────────────────────────┘
 ```
 
 ## Sequence Diagram
@@ -116,10 +144,11 @@ A browser extension that enables synchronized video playback across streaming se
 
 Actors:
 ───────
-UserA (Host)          Popup/Content Script on Browser A
-UserB (Joiner)        Popup/Content Script on Browser B
-Background.js         Shared service worker (1 per browser)
-Go Backend Server     main.go (in-memory WebSocket server)
+WebClientA (Host)   React SPA at localhost:8080 (User A)
+WebClientB (Joiner) React SPA at localhost:8080 (User B)
+ExtensionA          Chrome Extension on DRM site (User A)
+ExtensionB          Chrome Extension on DRM site (User B)
+Go Backend Server   WebSocket + REST API server
 
 Legend:
 ────────
@@ -130,117 +159,140 @@ Legend:
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 1. ROOM CREATION
+★ 1. ROOM CREATION (Web Client)
 ────────────────────────────────────────────────────────────────────────────────────────────
-UserA Popup        → POST /create-room { username: "Alice" }
+WebClientA         → POST /create-room { username: "Alice" }
+Go Backend Server  ← 200 OK { roomId: "room_12345", shareLink: "http://localhost:8080/join?room=room_12345" }
+
+WebClientA         → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
+Go Backend Server  ← Adds Alice as host, stores room state
+                    → WS to Alice: { type: "room-joined", data: {room, participants, videoState, chatHistory} }
+
+────────────────────────────────────────────────────────────────────────────────────────────
+
+★ 2. JOINING THE ROOM (Web Client)
+────────────────────────────────────────────────────────────────────────────────────────────
+WebClientB         → GET /join?room=room_12345
 Go Backend Server  ← 200 OK { roomId: "room_12345" }
 
-UserA Popup        → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
-Go Backend Server  ← Adds Alice as host, broadcasts:
-                    → WS Broadcast: { type: "room-created", data: {room info} }
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 2. JOINING THE ROOM
-────────────────────────────────────────────────────────────────────────────────────────────
-UserB Popup        → WS: { type: "join-room", roomId: "room_12345", username: "Bob" }
+WebClientB         → WS: { type: "join-room", roomId: "room_12345", username: "Bob" }
 Go Backend Server  ← Validates room + username
-                    → WS to Bob: { type: "room-joined", data: {...room details...} }
+                    → WS to Bob: { type: "room-joined", data: {room, participants, videoState, chatHistory} }
                     → WS Broadcast to all:
                         { type: "participant-joined", data: { participant: Bob } }
 
-Both clients update local state via:
-background.js      → chrome.storage.local.set({ currentRoom: room_12345 })
-popup.js           ← Refreshes participant list in UI
-content.js         ← Displays " CineBuddy Ready" overlay
+WebClientA         ← Updates participant list in UI
+WebClientB         ← Loads room state, video, and chat history
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 3. VIDEO SYNC LOOP (real-time collaboration)
+★ 3. EXTENSION INTEGRATION (DRM Sites)
 ────────────────────────────────────────────────────────────────────────────────────────────
-UserA Content.js detects play/pause/seek:
-UserA Content.js   → WS: { type: "video-sync", data: { currentTime, paused, ... } }
+ExtensionA (Netflix) → Detects video element on page
+ExtensionA         → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
+Go Backend Server  ← Validates existing room membership
+                    → WS to ExtensionA: { type: "room-joined", data: {room, participants} }
 
-Go Backend Server  ← Validates clientInRoom()
-                    → Broadcasts to room_12345:
-                        { type: "video-sync", data: {...} }
-
-UserB Background.js → Receives message → sends chrome.runtime message
-UserB Content.js    ← Receives "videoSync"
-                      └→ Applies playback change to <video> element
-
-(Repeat for play, pause, seek, ratechange, etc. throttled ≤5/sec)
+ExtensionA         → window.postMessage to WebClientA: { action: "extensionReady", roomId: "room_12345" }
+WebClientA         ← Updates UI to show "Extension Connected"
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 4. CHAT EXCHANGE
+★ 4. VIDEO SYNC (Web Client → Extension)
 ────────────────────────────────────────────────────────────────────────────────────────────
-UserB ChatOverlay   → WS: { type: "chat-message", data: { username: "Bob", content: "Hi!" } }
+WebClientA VideoPlayer → User plays video
+WebClientA         → WS: { type: "video-sync", data: { currentTime: 120, paused: false, videoUrl: "..." } }
+Go Backend Server  ← Updates room.CurrentVideo
+                    → WS Broadcast: { type: "video-sync", data: {...} }
 
-Go Backend Server   ← Validates + sanitizes message
-                    → Broadcasts:
-                        { type: "chat-message", data: {...} }
-
-UserA Content.js    ← Displays new message in overlay
-UserB Content.js    ← Mirrors message locally
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 5. WEBRTC CALL SETUP
-────────────────────────────────────────────────────────────────────────────────────────────
-UserA WebRTC        → getUserMedia() → Creates localStream
-UserA WebRTC        → WS: { type: "webrtc-offer", data: { to: Bob, offer: {...} } }
-
-Go Backend Server   ← Forwards to target client (Bob)
-UserB WebRTC        ← Receives { type: "webrtc-offer" }
-UserB WebRTC        → Sets remoteDescription → createAnswer()
-UserB WebRTC        → WS: { type: "webrtc-answer", data: { to: Alice, answer: {...} } }
-
-Go Backend Server   ← Forwards to Alice
-UserA WebRTC        ← Receives answer → sets remoteDescription
-Both clients exchange ICE candidates via:
-  webrtc-ice-candidate messages (forwarded through backend)
-
-Peer-to-peer connection established 
-Local and remote <video> elements appear inside overlay
+WebClientB         ← Updates local video player
+ExtensionA         ← Receives via background.js → content.js
+ExtensionA         → Applies sync to Netflix <video> element
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 6. KEEP-ALIVE & RATE LIMITING
+★ 5. VIDEO SYNC (Extension → Web Client)
+────────────────────────────────────────────────────────────────────────────────────────────
+ExtensionA (Netflix) → User seeks to 5:30
+ExtensionA         → chrome.runtime.sendMessage({ action: "videoSync", data: {...} })
+ExtensionA Background → WS: { type: "video-sync", data: { currentTime: 330, paused: false } }
+Go Backend Server  ← Updates room.CurrentVideo
+                    → WS Broadcast: { type: "video-sync", data: {...} }
+
+WebClientA         ← Updates video player position
+WebClientB         ← Updates video player position
+
+────────────────────────────────────────────────────────────────────────────────────────────
+
+★ 6. CHAT EXCHANGE
+────────────────────────────────────────────────────────────────────────────────────────────
+WebClientB ChatPanel → User types "Great movie!"
+WebClientB         → WS: { type: "chat-message", data: { username: "Bob", content: "Great movie!", timestamp: "..." } }
+Go Backend Server  ← Validates + sanitizes message, stores in room.ChatHistory
+                    → WS Broadcast: { type: "chat-message", data: {...} }
+
+WebClientA         ← Displays message in chat panel
+ExtensionA         ← Receives via background.js → content.js → chat overlay
+ExtensionB         ← Receives via background.js → content.js → chat overlay
+
+────────────────────────────────────────────────────────────────────────────────────────────
+
+★ 7. WEBRTC CALL SETUP
+────────────────────────────────────────────────────────────────────────────────────────────
+WebClientA VideoGrid → User clicks "Start Video Call"
+WebClientA         → getUserMedia() → Creates localStream
+WebClientA         → WS: { type: "webrtc-offer", data: { to: "Bob", offer: {...}, roomId: "room_12345" } }
+
+Go Backend Server  ← Validates room access, forwards to Bob
+WebClientB         ← Receives { type: "webrtc-offer" }
+WebClientB         → Sets remoteDescription → createAnswer()
+WebClientB         → WS: { type: "webrtc-answer", data: { to: "Alice", answer: {...}, roomId: "room_12345" } }
+
+Go Backend Server  ← Forwards to Alice
+WebClientA         ← Receives answer → sets remoteDescription
+Both clients exchange ICE candidates via webrtc-ice-candidate messages
+
+Peer-to-peer connection established
+Local and remote video streams appear in VideoGrid component
+
+────────────────────────────────────────────────────────────────────────────────────────────
+
+★ 8. KEEP-ALIVE & RATE LIMITING
 ────────────────────────────────────────────────────────────────────────────────────────────
 Every 30s:
-Background.js       → WS: { type: "ping" }
-Go Backend Server   ← Updates lastPing[clientID]
+WebClientA         → WS: { type: "ping" }
+ExtensionA         → WS: { type: "ping" }
+Go Backend Server  ← Updates lastPing[clientID]
 If inactive >60s:
-  → closes connection, deletes from clients map
+  → closes connection, removes from clients map
 
 Video-sync events:
-  → Limited to 5 per second per client via `isRateLimited()` + content.js throttle
+  → Limited to 5 per second per client via rateLimiter + content.js throttle
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 7. DISCONNECTION / CLEANUP
+★ 9. DISCONNECTION / CLEANUP
 ────────────────────────────────────────────────────────────────────────────────────────────
-UserB closes tab / loses connection:
-Go Backend Server   ← Detects closed socket, removes participant
-                    → Broadcasts to remaining clients:
-                        { type: "participant-left", data: { participantId: "Bob" } }
+WebClientB closes tab:
+Go Backend Server  ← Detects closed socket, removes participant
+                    → WS Broadcast: { type: "participant-left", data: { participantId: "Bob" } }
 
-UserA Content.js    ← Receives participant-left → updates overlay UI
+WebClientA         ← Updates participant list
+ExtensionA         ← Updates participant list in overlay
 
-If room empty → server deletes room entry from memory:
-  log.Printf("Room deleted: room_12345 (empty)")
+If room empty → server deletes room entry from memory
 
 ────────────────────────────────────────────────────────────────────────────────────────────
 
-★ 8. BACKEND RESTART
+★ 10. BACKEND RESTART
 ────────────────────────────────────────────────────────────────────────────────────────────
 All data wiped (stateless by design)
-background.js       → Detects WS disconnect → tries reconnect (with backoff)
-popup.js            → On reconnect: auto-rejoin lastRoomId
-→ WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
+WebClientA         → Detects WS disconnect → tries reconnect (with backoff)
+ExtensionA         → Detects WS disconnect → tries reconnect (with backoff)
+On reconnect:
+  → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
 
-Server rebuilds room state dynamically.
+Server rebuilds room state dynamically from reconnecting clients.
 ────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
@@ -412,7 +464,7 @@ Enable debug logging by opening browser developer tools and checking the console
 
 MIT License - see LICENSE file for details
 
-## 🧪 Manual Testing Guide
+## Manual Testing Guide
 
 ### Phase 1: Web Client Testing
 1. **Start the backend**

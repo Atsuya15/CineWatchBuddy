@@ -8,7 +8,7 @@ console.log('🎬 Building CineBuddy Extension...');
 
 // Validate manifest.json
 function validateManifest() {
-    const manifestPath = path.join(__dirname, '..', 'extension', 'manifest.json');
+    const manifestPath = path.join(__dirname, '..', 'src', 'extension', 'manifest.json');
     try {
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
         
@@ -34,7 +34,7 @@ function validateManifest() {
 }
 
 const distDir = path.join(__dirname, '..', 'dist');
-const extensionDir = path.join(__dirname, '..', 'extension');
+const extensionDir = path.join(__dirname, '..', 'src', 'extension');
 
 // Create dist directory if it doesn't exist
 if (!fs.existsSync(distDir)) {

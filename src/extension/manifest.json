@@ -55,7 +55,19 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "CineBuddy"
+    "default_title": "CineBuddy",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
   },
   "web_accessible_resources": [
     {
