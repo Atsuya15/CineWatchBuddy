@@ -19,7 +19,7 @@ const LandingPage = () => {
     setError('')
 
     try {
-      const response = await fetch('/create-room', {
+      const response = await fetch('/api/create-room', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -27,6 +27,10 @@ const LandingPage = () => {
         body: JSON.stringify({ username: username.trim() })
       })
 
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`HTTP ${response.status}: ${text || 'No body'}`)
+      }
       const data = await response.json()
 
       if (data.success) {
@@ -59,7 +63,7 @@ const LandingPage = () => {
     setError('')
 
     try {
-      const response = await fetch('/join-room', {
+      const response = await fetch('/api/join-room', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -70,6 +74,10 @@ const LandingPage = () => {
         })
       })
 
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`HTTP ${response.status}: ${text || 'No body'}`)
+      }
       const data = await response.json()
 
       if (data.success) {

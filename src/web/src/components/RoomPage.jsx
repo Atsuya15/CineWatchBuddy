@@ -31,9 +31,18 @@ const RoomPage = () => {
 
   const fetchRoomData = async () => {
     try {
-      const response = await fetch(`/join?room=${id}`)
+      const name = (localStorage.getItem('cinebuddy_username') || '').trim() || 'guest'
+      const response = await fetch('/api/join-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: id, username: name })
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`HTTP ${response.status}: ${text || 'No body'}`)
+      }
       const data = await response.json()
-      if (data.room) {
+      if (data.success && data.room) {
         setRoom(data.room)
       } else {
         setError('Room not found')

@@ -1,13 +1,12 @@
 package database
 
 import (
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"log"
-	"time"
+    "database/sql"
+    "encoding/json"
+    "fmt"
+    "time"
 
-	_ "github.com/mattn/go-sqlite3"
+    _ "github.com/mattn/go-sqlite3"
 )
 
 type Database struct {
