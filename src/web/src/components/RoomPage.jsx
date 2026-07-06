@@ -39,6 +39,11 @@ const RoomPage = () => {
   // Chat history lives here (not in ChatPanel) so it survives toggling the
   // chat window on/off during a session.
   const [chatMessages, setChatMessages] = useState([])
+  // Room permissions
+  const [isHost, setIsHost] = useState(false)
+  const [pendingApproval, setPendingApproval] = useState(false)
+  const [joinRequests, setJoinRequests] = useState([]) // [{ username, clientId }]
+  const [showPeople, setShowPeople] = useState(false)
 
   // Layout: right panel (separated from the video by a divider) that holds the
   // floating camera + chat windows
@@ -109,6 +114,8 @@ const RoomPage = () => {
       case 'room-joined':
         if (data.data) {
           setRoom(data.data.room)
+          setIsHost(!!data.data.isHost)
+          setPendingApproval(false)
           const existing = data.data.room?.participants || []
           setParticipants(existing
             .filter(p => p.isActive !== false && p.username !== username)
@@ -133,6 +140,31 @@ const RoomPage = () => {
         break
       case 'participant-left':
         handleParticipantLeft(data.data)
+        break
+      case 'join-pending':
+        setPendingApproval(true)
+        break
+      case 'join-request':
+        if (data.data?.clientId) {
+          setJoinRequests(prev => prev.some(r => r.clientId === data.data.clientId)
+            ? prev
+            : [...prev, { username: data.data.username, clientId: data.data.clientId }])
+        }
+        break
+      case 'join-denied':
+        exitRoom('The host declined your request to join.')
+        break
+      case 'kicked':
+        exitRoom('You were removed from the room by the host.')
+        break
+      case 'room-closed':
+        exitRoom(data.data?.reason || 'The room was closed by the host.')
+        break
+      case 'room-not-found':
+        exitRoom('That room no longer exists.')
+        break
+      case 'room-full':
+        exitRoom('This room is full.')
         break
       case 'webrtc-call-started':
         handleCallStarted(data.data)
@@ -172,6 +204,7 @@ const RoomPage = () => {
       return prev
     })
     addSystemMessage(`${joinedName} joined the room`, `sys-join-${joinedName}`)
+    setJoinRequests(prev => prev.filter(r => r.username !== joinedName))
   }
 
   const handleParticipantLeft = (data) => {
@@ -396,6 +429,27 @@ const RoomPage = () => {
     navigate('/')
   }
 
+  // Terminal states (kicked / room closed / denied): stop reconnecting and show
+  // a message with a way back home.
+  const exitRoom = (message) => {
+    websocketManager.disconnect()
+    setPendingApproval(false)
+    setError(message)
+  }
+
+  const approveJoin = (clientId) => {
+    websocketManager.send('approve-join', { clientId })
+    setJoinRequests(prev => prev.filter(r => r.clientId !== clientId))
+  }
+  const denyJoin = (clientId) => {
+    websocketManager.send('deny-join', { clientId })
+    setJoinRequests(prev => prev.filter(r => r.clientId !== clientId))
+  }
+  const kickParticipant = (name) => {
+    websocketManager.send('kick-participant', { username: name })
+    setParticipants(prev => prev.filter(p => p.username !== name))
+  }
+
   const copyInvite = async () => {
     const link = `${window.location.origin}/room/${id}`
     try {
@@ -446,12 +500,24 @@ const RoomPage = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center text-white">
-          <h1 className="text-2xl font-bold mb-4">Error</h1>
-          <p className="mb-4 text-gray-400">{error}</p>
+        <div className="text-center text-white max-w-sm px-6">
+          <p className="text-lg mb-6">{error}</p>
           <button onClick={() => navigate('/')} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500">
             Back to Home
           </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (pendingApproval) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center text-white max-w-sm px-6">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <h1 className="text-xl font-semibold mb-2">Waiting for the host…</h1>
+          <p className="text-gray-400 mb-6">The room host needs to let you in. This will open automatically once they approve.</p>
+          <button onClick={leaveRoom} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg">Cancel</button>
         </div>
       </div>
     )
@@ -508,9 +574,32 @@ const RoomPage = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="hidden md:inline text-xs text-gray-500">
-            {participants.length + 1} watching
-          </span>
+          <div className="relative">
+            <button onClick={() => setShowPeople(v => !v)}
+              className="text-sm bg-gray-800 hover:bg-gray-700 rounded-lg px-3 py-1.5">
+              👥 {participants.length + 1}{isHost ? ' · host' : ''}
+            </button>
+            {showPeople && (
+              <div className="absolute right-0 mt-2 w-60 bg-gray-950 border border-gray-800 rounded-lg shadow-xl z-50 py-1 text-sm">
+                <div className="px-3 py-1.5 border-b border-gray-800 text-gray-400 text-xs">In this room</div>
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span>{username} <span className="text-gray-500">(you{isHost ? ', host' : ''})</span></span>
+                </div>
+                {participants.map(p => (
+                  <div key={p.username} className="flex items-center justify-between px-3 py-1.5 hover:bg-gray-900">
+                    <span>{p.username}{room?.hostUsername === p.username ? ' 👑' : ''}</span>
+                    {isHost && (
+                      <button onClick={() => kickParticipant(p.username)} title="Remove from room"
+                        className="text-xs text-gray-500 hover:text-red-400">Kick</button>
+                    )}
+                  </div>
+                ))}
+                {participants.length === 0 && (
+                  <div className="px-3 py-1.5 text-gray-600">No one else yet</div>
+                )}
+              </div>
+            )}
+          </div>
           <button onClick={() => setShowCamera(v => !v)}
             className={`text-sm rounded-lg px-3 py-1.5 hover:bg-gray-700 ${showCamera ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400'}`}>
             📹 Cameras
@@ -530,7 +619,24 @@ const RoomPage = () => {
         </div>
       </header>
 
-      {/* Main area: [ video + participant strip ] [ chat sidebar ] */}
+      {/* Host: pending join requests */}
+      {isHost && joinRequests.length > 0 && (
+        <div className="shrink-0 bg-blue-950/70 border-b border-blue-800">
+          {joinRequests.map(req => (
+            <div key={req.clientId} className="flex items-center justify-between px-4 py-2 text-sm">
+              <span><span className="font-semibold">{req.username}</span> wants to join the room</span>
+              <div className="flex gap-2">
+                <button onClick={() => approveJoin(req.clientId)}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white">Admit</button>
+                <button onClick={() => denyJoin(req.clientId)}
+                  className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-white">Deny</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Main area */}
       <div className="flex-1 flex min-h-0">
         {/* Video with a docked, resizable/collapsible participant strip below it */}
         {/* Video area */}

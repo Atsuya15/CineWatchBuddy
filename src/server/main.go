@@ -31,6 +31,14 @@ type Server struct {
     clientRooms map[string]string
     clientUsers map[string]string
     writeMu     map[string]*sync.Mutex
+    pending     map[string]*pendingJoin // clientID -> awaiting host approval
+}
+
+// pendingJoin tracks a client that has connected and requested to join a room
+// but is waiting for the host to approve.
+type pendingJoin struct {
+    roomID   string
+    username string
 }
 
 type Config struct {
@@ -50,6 +58,7 @@ type Room struct {
 	LastActivity time.Time              `json:"lastActivity"`
 	IsActive     bool                   `json:"isActive"`
 	HostID       string                 `json:"hostId"`
+	HostUsername string                 `json:"hostUsername"`
 	VideoState   *database.VideoState   `json:"videoState,omitempty"`
 	ChatHistory  []*database.ChatMessage `json:"chatHistory,omitempty"`
 	Clients      []string               `json:"-"` // Track connected client IDs
@@ -108,6 +117,7 @@ func NewServer(config *Config) (*Server, error) {
         clientRooms: make(map[string]string),
         clientUsers: make(map[string]string),
         writeMu:     make(map[string]*sync.Mutex),
+        pending:     make(map[string]*pendingJoin),
 	}
 
 	// Load existing rooms from database
@@ -263,6 +273,7 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		LastActivity: now,
 		IsActive:     true,
 		HostID:       "",
+		HostUsername: req.Username, // the creator is the room host
 		VideoState:   &database.VideoState{},
 		ChatHistory:  []*database.ChatMessage{},
 		Clients:      []string{},
@@ -319,99 +330,26 @@ func (s *Server) handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only VALIDATE that the room exists. The actual join — and host approval —
+	// happens over the WebSocket (join-room), so no participant is added here.
 	s.mutex.RLock()
-	room, exists := s.rooms[req.RoomID]
+	_, exists := s.rooms[req.RoomID]
 	s.mutex.RUnlock()
-
 	if !exists {
-		// Try to load from database
-		dbRoom, err := s.db.GetRoom(req.RoomID)
-		if err != nil {
+		if _, err := s.db.GetRoom(req.RoomID); err != nil {
 			http.Error(w, "Room not found", http.StatusNotFound)
 			return
 		}
-
-		// Restore room
-		participants, err := s.db.GetParticipants(req.RoomID)
-		if err != nil {
-			http.Error(w, "Failed to load room participants", http.StatusInternalServerError)
-			return
-		}
-
-		chatHistory, err := s.db.GetChatHistory(req.RoomID, 100)
-		if err != nil {
-			chatHistory = []*database.ChatMessage{}
-		}
-
-		videoState, err := s.db.GetVideoState(req.RoomID)
-		if err != nil {
-			videoState = &database.VideoState{}
-		}
-
-		room = &Room{
-			ID:           dbRoom.ID,
-			Name:         dbRoom.Name,
-			Participants: participants,
-			CreatedAt:    dbRoom.CreatedAt,
-			LastActivity: dbRoom.LastActivity,
-			IsActive:     dbRoom.IsActive,
-			HostID:       dbRoom.HostID,
-			VideoState:   videoState,
-			ChatHistory:  chatHistory,
-		}
-
-		s.mutex.Lock()
-		s.rooms[req.RoomID] = room
-		s.mutex.Unlock()
 	}
-
-	if len(room.Participants) >= s.config.MaxParticipants {
-		http.Error(w, "Room is full", http.StatusForbidden)
-		return
-	}
-
-	participantID := generateParticipantID()
-	now := time.Now()
-
-	participant := &database.Participant{
-		ID:                participantID,
-		RoomID:            req.RoomID,
-		Username:          req.Username,
-		JoinedAt:          now,
-		LastSeen:          now,
-		IsActive:          true,
-		BrowserFingerprint: generateBrowserFingerprint(r),
-		DeviceType:        getDeviceType(r),
-	}
-
-	if err := s.db.AddParticipant(participant); err != nil {
-		log.Printf("Failed to add participant to database: %v", err)
-		http.Error(w, "Failed to join room", http.StatusInternalServerError)
-		return
-	}
-
-	s.mutex.Lock()
-	room.Participants = append(room.Participants, participant)
-	room.LastActivity = now
-	if room.HostID == "" {
-		room.HostID = participantID
-	}
-	s.mutex.Unlock()
-
-	// Update room in database
-	s.updateRoomInDatabase(room)
 
 	response := map[string]interface{}{
 		"success":   true,
 		"roomId":    req.RoomID,
-		"room":      room,
-		"participantId": participantID,
 		"shareLink": fmt.Sprintf("http://localhost:%s/join?room=%s", s.config.Port, req.RoomID),
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
-	log.Printf("User %s joined room %s", req.Username, req.RoomID)
+	log.Printf("Join validated for room %s (user %s)", req.RoomID, req.Username)
 }
 
 func (s *Server) updateRoomInDatabase(room *Room) {
@@ -486,6 +424,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
     delete(s.clientRooms, clientID)
     delete(s.clientUsers, clientID)
     delete(s.writeMu, clientID)
+    delete(s.pending, clientID)
 
     // Remove this client from the room's client list immediately.
     if roomID != "" && roomID != "_" {
@@ -522,16 +461,26 @@ func (s *Server) handleParticipantDeparture(roomID, username string) {
 			return
 		}
 	}
-	if room, exists := s.rooms[roomID]; exists {
-		for _, p := range room.Participants {
-			if p.Username == username && p.IsActive {
-				p.IsActive = false
-				s.db.RemoveParticipant(p.ID)
-				break
-			}
+	room, exists := s.rooms[roomID]
+	if !exists {
+		s.mutex.Unlock()
+		return
+	}
+	isHost := username == room.HostUsername
+	for _, p := range room.Participants {
+		if p.Username == username && p.IsActive {
+			p.IsActive = false
+			s.db.RemoveParticipant(p.ID)
+			break
 		}
 	}
 	s.mutex.Unlock()
+
+	// If the host is gone, the room ends for everyone.
+	if isHost {
+		s.endRoom(roomID, "The host left the room")
+		return
+	}
 
 	s.broadcastToRoom(roomID, WebSocketMessage{
 		Type: "participant-left",
@@ -546,6 +495,12 @@ func (s *Server) handleWebSocketMessage(clientID string, msg WebSocketMessage) {
 		s.handleJoinRoomWS(clientID, msg.Data)
 	case "leave-room":
 		s.handleLeaveRoomWS(clientID, msg.Data)
+	case "approve-join":
+		s.handleApproveJoin(clientID, msg.Data)
+	case "deny-join":
+		s.handleDenyJoin(clientID, msg.Data)
+	case "kick-participant":
+		s.handleKickParticipant(clientID, msg.Data)
 	case "video-sync":
 		s.handleVideoSync(clientID, msg.Data)
 	case "chat-message":
@@ -575,20 +530,77 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 
 	roomID, _ := dataMap["roomId"].(string)
 	username, _ := dataMap["username"].(string)
-
 	if roomID == "" || username == "" {
 		return
 	}
 
+	s.mutex.Lock()
+	room, exists := s.rooms[roomID]
+	if !exists {
+		s.mutex.Unlock()
+		s.sendToClient(clientID, WebSocketMessage{Type: "room-not-found", Data: map[string]interface{}{"roomId": roomID}})
+		return
+	}
+	// Establish the host: the creator, or the first person to (re)join a room
+	// whose host isn't known (e.g. restored from the database after a restart).
+	if room.HostUsername == "" {
+		room.HostUsername = username
+	}
+	isHost := username == room.HostUsername
+	alreadyIn := false
+	activeCount := 0
+	for _, p := range room.Participants {
+		if p.IsActive {
+			activeCount++
+			if p.Username == username {
+				alreadyIn = true
+			}
+		}
+	}
+	s.mutex.Unlock()
+
+	// The host and reconnecting members are admitted directly.
+	if isHost || alreadyIn {
+		s.admitParticipant(clientID, roomID, username)
+		return
+	}
+
+	if activeCount >= s.config.MaxParticipants {
+		s.sendToClient(clientID, WebSocketMessage{Type: "room-full", Data: map[string]interface{}{"roomId": roomID}})
+		return
+	}
+
+	// Everyone else waits for the host to approve. Keep them OUT of the room
+	// (clientRooms "_") so they don't receive room broadcasts until admitted.
+	s.mutex.Lock()
+	s.pending[clientID] = &pendingJoin{roomID: roomID, username: username}
+	s.clientRooms[clientID] = "_"
+	s.clientUsers[clientID] = username
+	hostClientID := ""
+	for cid, uname := range s.clientUsers {
+		if uname == room.HostUsername && s.clientRooms[cid] == roomID {
+			hostClientID = cid
+			break
+		}
+	}
+	s.mutex.Unlock()
+
+	s.sendToClient(clientID, WebSocketMessage{Type: "join-pending", Data: map[string]interface{}{"roomId": roomID}})
+	if hostClientID != "" {
+		s.sendToClient(hostClientID, WebSocketMessage{Type: "join-request", Data: map[string]interface{}{"username": username, "clientId": clientID}})
+	}
+}
+
+// admitParticipant fully adds a client to a room (creating/reusing the
+// participant), sends them the room state, and announces them to the room.
+func (s *Server) admitParticipant(clientID, roomID, username string) {
 	s.mutex.RLock()
 	room, exists := s.rooms[roomID]
 	s.mutex.RUnlock()
-
 	if !exists {
 		return
 	}
 
-	// Find or create participant
 	var participant *database.Participant
 	for _, p := range room.Participants {
 		if p.Username == username && p.IsActive {
@@ -596,63 +608,30 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 			break
 		}
 	}
-
 	if participant == nil {
-		// Create new participant
 		participant = &database.Participant{
-			ID:        generateClientID(),
-			RoomID:    roomID,
-			Username:  username,
-			IsActive:  true,
-			JoinedAt:  time.Now(),
-			LastSeen:  time.Now(),
+			ID: generateClientID(), RoomID: roomID, Username: username,
+			IsActive: true, JoinedAt: time.Now(), LastSeen: time.Now(),
 		}
-
-		// Add to database
 		if err := s.db.AddParticipant(participant); err != nil {
 			log.Printf("Failed to add participant to database: %v", err)
 			return
 		}
-
-		// Add to room
 		s.mutex.Lock()
 		room.Participants = append(room.Participants, participant)
-		// Set first participant as host
-		if len(room.Participants) == 1 {
+		if room.HostID == "" {
 			room.HostID = participant.ID
 		}
 		s.mutex.Unlock()
-
-		// Update room in database
 		s.updateRoomInDatabase(room)
 	}
-
-	// Update last seen
 	participant.LastSeen = time.Now()
 	s.db.UpdateParticipantLastSeen(participant.ID)
 
-	// Update client room + user mapping
 	s.mutex.Lock()
+	delete(s.pending, clientID)
 	s.clientRooms[clientID] = roomID
 	s.clientUsers[clientID] = username
-	s.mutex.Unlock()
-
-	// Send room state
-	response := WebSocketMessage{
-		Type: "room-joined",
-		Data: map[string]interface{}{
-			"room":           room,
-			"participantId":  participant.ID,
-			"currentVideo":   room.VideoState,
-			"chatHistory":    room.ChatHistory,
-		},
-	}
-
-	s.sendToClient(clientID, response)
-
-	// Only broadcast participant joined if this is a new connection
-	// Check if this participant was already connected
-	s.mutex.RLock()
 	wasConnected := false
 	for _, cid := range room.Clients {
 		if cid == clientID {
@@ -660,22 +639,164 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 			break
 		}
 	}
-	s.mutex.RUnlock()
+	if !wasConnected {
+		room.Clients = append(room.Clients, clientID)
+	}
+	s.mutex.Unlock()
+
+	s.sendToClient(clientID, WebSocketMessage{
+		Type: "room-joined",
+		Data: map[string]interface{}{
+			"room":          room,
+			"participantId": participant.ID,
+			"currentVideo":  room.VideoState,
+			"chatHistory":   room.ChatHistory,
+			"hostUsername":  room.HostUsername,
+			"isHost":        username == room.HostUsername,
+		},
+	})
 
 	if !wasConnected {
-		// Add client to room
-		s.mutex.Lock()
-		room.Clients = append(room.Clients, clientID)
-		s.mutex.Unlock()
-
-		// Broadcast participant joined only for new connections
 		s.broadcastToRoom(roomID, WebSocketMessage{
 			Type: "participant-joined",
-			Data: map[string]interface{}{
-				"participant": participant,
-			},
+			Data: map[string]interface{}{"participant": participant},
 		})
 	}
+}
+
+// isRoomHost reports whether the client is the host of the room it's in.
+func (s *Server) isRoomHost(clientID string) (string, bool) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	roomID := s.clientRooms[clientID]
+	username := s.clientUsers[clientID]
+	room, exists := s.rooms[roomID]
+	if !exists {
+		return "", false
+	}
+	return roomID, username == room.HostUsername
+}
+
+func (s *Server) handleApproveJoin(clientID string, data interface{}) {
+	dataMap, _ := data.(map[string]interface{})
+	target, _ := dataMap["clientId"].(string)
+	if target == "" {
+		return
+	}
+	roomID, host := s.isRoomHost(clientID)
+	if !host {
+		return
+	}
+	s.mutex.RLock()
+	pend := s.pending[target]
+	s.mutex.RUnlock()
+	if pend == nil || pend.roomID != roomID {
+		return
+	}
+	s.admitParticipant(target, pend.roomID, pend.username)
+}
+
+func (s *Server) handleDenyJoin(clientID string, data interface{}) {
+	dataMap, _ := data.(map[string]interface{})
+	target, _ := dataMap["clientId"].(string)
+	if target == "" {
+		return
+	}
+	roomID, host := s.isRoomHost(clientID)
+	if !host {
+		return
+	}
+	s.mutex.Lock()
+	pend := s.pending[target]
+	if pend != nil && pend.roomID == roomID {
+		delete(s.pending, target)
+	} else {
+		pend = nil
+	}
+	s.mutex.Unlock()
+	if pend == nil {
+		return
+	}
+	s.sendToClient(target, WebSocketMessage{Type: "join-denied", Data: map[string]interface{}{"roomId": roomID}})
+}
+
+func (s *Server) handleKickParticipant(clientID string, data interface{}) {
+	dataMap, _ := data.(map[string]interface{})
+	targetUser, _ := dataMap["username"].(string)
+	roomID, host := s.isRoomHost(clientID)
+	if !host || targetUser == "" {
+		return
+	}
+	s.mutex.Lock()
+	room, exists := s.rooms[roomID]
+	if !exists || targetUser == room.HostUsername {
+		s.mutex.Unlock()
+		return
+	}
+	for _, p := range room.Participants {
+		if p.Username == targetUser && p.IsActive {
+			p.IsActive = false
+			s.db.RemoveParticipant(p.ID)
+			break
+		}
+	}
+	var targetClients []string
+	for cid, uname := range s.clientUsers {
+		if uname == targetUser && (s.clientRooms[cid] == roomID || (s.pending[cid] != nil && s.pending[cid].roomID == roomID)) {
+			targetClients = append(targetClients, cid)
+		}
+	}
+	for _, cid := range targetClients {
+		for i, rc := range room.Clients {
+			if rc == cid {
+				room.Clients = append(room.Clients[:i], room.Clients[i+1:]...)
+				break
+			}
+		}
+		s.clientRooms[cid] = "_"
+		delete(s.pending, cid)
+	}
+	s.mutex.Unlock()
+
+	for _, cid := range targetClients {
+		s.sendToClient(cid, WebSocketMessage{Type: "kicked", Data: map[string]interface{}{"roomId": roomID}})
+	}
+	s.broadcastToRoom(roomID, WebSocketMessage{Type: "participant-left", Data: map[string]interface{}{"username": targetUser}})
+}
+
+// endRoom closes a room: tells everyone (members + pending), deletes it, and
+// clears all mappings. Used when the host leaves.
+func (s *Server) endRoom(roomID, reason string) {
+	s.mutex.Lock()
+	room, exists := s.rooms[roomID]
+	if !exists {
+		s.mutex.Unlock()
+		return
+	}
+	var clients []string
+	for cid, r := range s.clientRooms {
+		if r == roomID {
+			clients = append(clients, cid)
+			s.clientRooms[cid] = "_"
+		}
+	}
+	for cid, pj := range s.pending {
+		if pj.roomID == roomID {
+			clients = append(clients, cid)
+			delete(s.pending, cid)
+		}
+	}
+	for _, p := range room.Participants {
+		s.db.RemoveParticipant(p.ID)
+	}
+	s.db.DeleteRoom(roomID)
+	delete(s.rooms, roomID)
+	s.mutex.Unlock()
+
+	for _, cid := range clients {
+		s.sendToClient(cid, WebSocketMessage{Type: "room-closed", Data: map[string]interface{}{"reason": reason}})
+	}
+	log.Printf("Room %s ended: %s", roomID, reason)
 }
 
 func (s *Server) handleLeaveRoomWS(clientID string, data interface{}) {
@@ -684,9 +805,12 @@ func (s *Server) handleLeaveRoomWS(clientID string, data interface{}) {
 	username := s.clientUsers[clientID]
 	s.clientRooms[clientID] = "_"
 	delete(s.clientUsers, clientID)
+	delete(s.pending, clientID)
 
+	isHost := false
 	if roomID != "" && roomID != "_" {
 		if room, exists := s.rooms[roomID]; exists {
+			isHost = username == room.HostUsername
 			for i, cid := range room.Clients {
 				if cid == clientID {
 					room.Clients = append(room.Clients[:i], room.Clients[i+1:]...)
@@ -704,14 +828,17 @@ func (s *Server) handleLeaveRoomWS(clientID string, data interface{}) {
 	}
 	s.mutex.Unlock()
 
-	if roomID != "" && roomID != "_" && username != "" {
-		s.broadcastToRoom(roomID, WebSocketMessage{
-			Type: "participant-left",
-			Data: map[string]interface{}{
-				"username": username,
-			},
-		})
+	if roomID == "" || roomID == "_" || username == "" {
+		return
 	}
+	if isHost {
+		s.endRoom(roomID, "The host left the room")
+		return
+	}
+	s.broadcastToRoom(roomID, WebSocketMessage{
+		Type: "participant-left",
+		Data: map[string]interface{}{"username": username},
+	})
 }
 
 func (s *Server) handleVideoSync(clientID string, data interface{}) {
