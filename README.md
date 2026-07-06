@@ -2,28 +2,32 @@
 
 ![CineWatchBuddy](assets/icons/CineWatchBuddyLogo.png)
 
-A browser extension that enables synchronized video playback across streaming services (YouTube,Vimeo etc.) with friends in real-time.
+A watch‑party app: a **React web client** served by a **Go backend** that keeps
+video playback, chat, and camera/mic in sync with friends in real time. Works
+with YouTube, Vimeo, and direct video URLs out of the box; an optional Chrome
+extension adds sync for DRM sites (Netflix, Disney+, Prime Video, …).
 
 ## Features
 
--  **Synchronized Playback**: Watch videos together with friends across different streaming platforms
--  **Real-time Chat**: Chat with friends while watching
--  **Video Calls**: WebRTC-powered video calls during watch parties
--  **Room Management**: Create and join virtual rooms (up to 15 users per room)
--  **Cross-Platform**: Works with Netflix, Hulu, YouTube, Disney+, Amazon Prime, and more
--  **Low Latency**: Sub-500ms sync for smooth viewing experience
+- **Synchronized Playback** — play / pause / seek stay in sync for everyone in the room (YouTube, Vimeo, and direct video URLs in the web app)
+- **Friendly Rooms** — create a room with a memorable name (e.g. `movie-night`) and share it or the invite link; up to 15 people per room
+- **Real-time Chat** — chat while you watch, with persistent history that survives toggling the panel
+- **Voice / Video Chat** — peer-to-peer WebRTC camera & mic in a camera grid you can resize per participant (e.g. 70/30, not a fixed split)
+- **Flexible UI** — floating, draggable, resizable, collapsible Camera and Chat panels beside the video
+- **Share Publicly** — expose your local server with one Cloudflare Tunnel URL; friends just open the link (no install, no localhost)
+- **DRM Companion** — optional Chrome extension syncs playback on Netflix / Disney+ / Prime Video, etc.
 
 ## Architecture
 
 > 📐 **See [ARCHITECTURE.md](ARCHITECTURE.md)** for rendered diagrams — a component
 > graph, the watch‑party message flow, and the deployment shape.
 
-- **Web Client**: React-based SPA served by Go backend
-- **Chrome Extension**: Manifest V3 extension for DRM content (Netflix, Disney+, etc.)
-- **Backend**: Go WebSocket server with persistent room state and chat history
-- **Sync Protocol**: Real-time video event synchronization via WebSocket
-- **Video Calls**: Peer-to-peer WebRTC connections with STUN servers
-- **Cross-Platform**: Seamless integration between web client and extension
+- **Web Client**: React SPA served by the Go backend (single origin)
+- **Backend**: Go WebSocket + REST server; SQLite for room / chat / video state
+- **Sync Protocol**: real‑time events over one shared WebSocket (`video-sync` is broadcast to everyone **except the sender** to avoid echo)
+- **Video Calls**: peer‑to‑peer WebRTC (camera/mic) with STUN + TURN; the backend only relays signaling
+- **Public Access**: Cloudflare Tunnel provides a shareable HTTPS / WSS URL
+- **Chrome Extension**: optional MV3 companion for DRM streaming sites
 
 ## Project Structure
 
@@ -51,252 +55,53 @@ CineWatchBuddy/
 └── dist/                 # Built Extension (Generated)
 ```
 
-### System Architecture Diagram
+## Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    CineWatchBuddy Platform                                            │
-│                              (Web Client + Extension + Backend)                                 │
-└─────────────────────────────────────────────────────────────────────────────────────────────────┘
-                                            │
-                                            │
-         ┌──────────────────────────────────┼──────────────────────────────────┐
-         │                                  │                                  │
-         ▼                                  ▼                                  ▼
-┌─────────────────────┐          ┌─────────────────────┐          ┌─────────────────────┐
-│   Web Client        │          │  Chrome Extension   │          │   Go Backend        │
-│   (React SPA)       │          │   (Manifest V3)     │          │   (WebSocket)       │
-│                     │          │                     │          │                     │
-│ src/web/            │          │ src/extension/      │          │ src/server/         │
-│ ├── components/     │          │ ├── background/     │          │ ├── main.go         │
-│ ├── App.jsx         │          │ ├── content/        │          │ └── go.mod          │
-│ └── package.json    │          │ ├── popup/          │          │                     │
-│                     │          │ ├── components/     │          │ - Room Management   │
-│ - Video Player      │          │ └── manifest.json   │          │ - WebSocket Server  │
-│ - Chat Panel        │          │                     │          │ - REST API          │
-│ - Video Grid        │          │ - Service Worker    │          │ - WebRTC Signaling  │
-│ - Room Management   │          │ - Content Scripts   │          │ - Chat History      │
-│ - WebRTC Calls      │          │ - DRM Site Support  │          │                     │
-└─────────────────────┘          │ - Video Sync        │          └─────────────────────┘
-         │                       │ - Chat Overlay      │                     │
-         │                       │ - WebRTC Signaling  │                     │
-         │                       └─────────────────────┘                     │
-         │                                │                                  │
-         │                                │                                  │
-         └────────────────────────────────┼──────────────────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────────────┐
-                              │     Communication Layer     │
-                              │─────────────────────────────│
-                              │                             │
-                              │ WebSocket (ws://localhost)  │
-                              │ ├── video-sync              │
-                              │ ├── chat-message            │
-                              │ ├── webrtc-offer/answer     │
-                              │ ├── participant-joined/left │
-                              │ └── room-update             │
-                              │                             │
-                              │ REST API (http://localhost) │
-                              │ ├── /create-room (POST)     │
-                              │ ├── /join-room (POST)       │
-                              │ ├── /rooms (GET)            │
-                              │ └── /join?room=<id> (GET)   │
-                              └─────────────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────────────┐
-                              │      Data Management        │
-                              │─────────────────────────────│
-                              │                             │
-                              │ In-Memory Storage:          │
-                              │ ├── rooms map[string]*Room  │
-                              │ ├── clients map[string]*WS  │
-                              │ ├── rateLimiter             │
-                              │ └── ping checkers           │
-                              │                             │
-                              │ Room State:                 │
-                              │ ├── VideoState (current)    │
-                              │ ├── ChatHistory (last 100)  │
-                              │ ├── Participants[]          │
-                              │ └── LastActivity            │
-                              └─────────────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────────────┐
-                              │    External Integrations    │
-                              │─────────────────────────────│
-                              │                             │
-                              │ WebRTC:                     │
-                              │ ├── STUN Servers (Google)   │
-                              │ ├── TURN Servers (Optional) │
-                              │ └── P2P Video Calls         │
-                              │                             │
-                              │ DRM Platforms:              │
-                              │ ├── Netflix, Disney+        │
-                              │ ├── Amazon Prime, Hulu      │
-                              │ ├── HBO Max, Paramount+     │
-                              │ └── PeacockTV               │
-                              └─────────────────────────────┘
-```
+High‑level component view. The full set — this graph plus the watch‑party
+**message‑flow sequence** and the **deployment shape** — lives in
+**[ARCHITECTURE.md](ARCHITECTURE.md)** and renders inline on GitHub.
 
-## Sequence Diagram
+```mermaid
+flowchart TB
+  subgraph A["Browser A - React Web Client (SPA)"]
+    RP["RoomPage - layout, presence, WebRTC"]
+    VP["VideoPlayer - YouTube / HTML5 sync"]
+    CP["ChatPanel"]
+    CG["CameraGrid - resizable tiles"]
+    WSM(["websocketManager - shared WS"])
+    RP --> VP
+    RP --> CP
+    RP --> CG
+    RP --> WSM
+    VP --> WSM
+  end
+  B["Browser B (same SPA)"]
 
-```
-───────────────────────────────  CineWatchBuddy Watch Party Flow  ───────────────────────────────
+  CF{{"Cloudflare Tunnel"}}
 
-Actors:
-───────
-WebClientA (Host)   React SPA at localhost:8080 (User A)
-WebClientB (Joiner) React SPA at localhost:8080 (User B)
-ExtensionA          Chrome Extension on DRM site (User A)
-ExtensionB          Chrome Extension on DRM site (User B)
-Go Backend Server   WebSocket + REST API server
+  subgraph GO["Go Backend - single origin :8080"]
+    ST["Static + SPA fallback"]
+    REST["REST - /create-room, /join-room, /rooms, /health"]
+    WSH["WebSocket /ws - rooms, presence, video-sync, chat, signaling"]
+  end
+  DB[("SQLite - rooms, participants, chat, video state")]
+  ICE["STUN / TURN"]
+  YT["YouTube IFrame API"]
 
-Legend:
-────────
-→  : HTTP or WS message sent
-←  : Response / event received
-...: Parallel action
-★  : Key event in flow
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 1. ROOM CREATION (Web Client)
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientA         → POST /create-room { username: "Alice" }
-Go Backend Server  ← 200 OK { roomId: "room_12345", shareLink: "http://localhost:8080/join?room=room_12345" }
-
-WebClientA         → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
-Go Backend Server  ← Adds Alice as host, stores room state
-                    → WS to Alice: { type: "room-joined", data: {room, participants, videoState, chatHistory} }
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 2. JOINING THE ROOM (Web Client)
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientB         → GET /join?room=room_12345
-Go Backend Server  ← 200 OK { roomId: "room_12345" }
-
-WebClientB         → WS: { type: "join-room", roomId: "room_12345", username: "Bob" }
-Go Backend Server  ← Validates room + username
-                    → WS to Bob: { type: "room-joined", data: {room, participants, videoState, chatHistory} }
-                    → WS Broadcast to all:
-                        { type: "participant-joined", data: { participant: Bob } }
-
-WebClientA         ← Updates participant list in UI
-WebClientB         ← Loads room state, video, and chat history
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 3. EXTENSION INTEGRATION (DRM Sites)
-────────────────────────────────────────────────────────────────────────────────────────────
-ExtensionA (Netflix) → Detects video element on page
-ExtensionA         → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
-Go Backend Server  ← Validates existing room membership
-                    → WS to ExtensionA: { type: "room-joined", data: {room, participants} }
-
-ExtensionA         → window.postMessage to WebClientA: { action: "extensionReady", roomId: "room_12345" }
-WebClientA         ← Updates UI to show "Extension Connected"
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 4. VIDEO SYNC (Web Client → Extension)
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientA VideoPlayer → User plays video
-WebClientA         → WS: { type: "video-sync", data: { currentTime: 120, paused: false, videoUrl: "..." } }
-Go Backend Server  ← Updates room.CurrentVideo
-                    → WS Broadcast: { type: "video-sync", data: {...} }
-
-WebClientB         ← Updates local video player
-ExtensionA         ← Receives via background.js → content.js
-ExtensionA         → Applies sync to Netflix <video> element
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 5. VIDEO SYNC (Extension → Web Client)
-────────────────────────────────────────────────────────────────────────────────────────────
-ExtensionA (Netflix) → User seeks to 5:30
-ExtensionA         → chrome.runtime.sendMessage({ action: "videoSync", data: {...} })
-ExtensionA Background → WS: { type: "video-sync", data: { currentTime: 330, paused: false } }
-Go Backend Server  ← Updates room.CurrentVideo
-                    → WS Broadcast: { type: "video-sync", data: {...} }
-
-WebClientA         ← Updates video player position
-WebClientB         ← Updates video player position
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 6. CHAT EXCHANGE
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientB ChatPanel → User types "Great movie!"
-WebClientB         → WS: { type: "chat-message", data: { username: "Bob", content: "Great movie!", timestamp: "..." } }
-Go Backend Server  ← Validates + sanitizes message, stores in room.ChatHistory
-                    → WS Broadcast: { type: "chat-message", data: {...} }
-
-WebClientA         ← Displays message in chat panel
-ExtensionA         ← Receives via background.js → content.js → chat overlay
-ExtensionB         ← Receives via background.js → content.js → chat overlay
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 7. WEBRTC CALL SETUP
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientA VideoGrid → User clicks "Start Video Call"
-WebClientA         → getUserMedia() → Creates localStream
-WebClientA         → WS: { type: "webrtc-offer", data: { to: "Bob", offer: {...}, roomId: "room_12345" } }
-
-Go Backend Server  ← Validates room access, forwards to Bob
-WebClientB         ← Receives { type: "webrtc-offer" }
-WebClientB         → Sets remoteDescription → createAnswer()
-WebClientB         → WS: { type: "webrtc-answer", data: { to: "Alice", answer: {...}, roomId: "room_12345" } }
-
-Go Backend Server  ← Forwards to Alice
-WebClientA         ← Receives answer → sets remoteDescription
-Both clients exchange ICE candidates via webrtc-ice-candidate messages
-
-Peer-to-peer connection established
-Local and remote video streams appear in VideoGrid component
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 8. KEEP-ALIVE & RATE LIMITING
-────────────────────────────────────────────────────────────────────────────────────────────
-Every 30s:
-WebClientA         → WS: { type: "ping" }
-ExtensionA         → WS: { type: "ping" }
-Go Backend Server  ← Updates lastPing[clientID]
-If inactive >60s:
-  → closes connection, removes from clients map
-
-Video-sync events:
-  → Limited to 5 per second per client via rateLimiter + content.js throttle
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 9. DISCONNECTION / CLEANUP
-────────────────────────────────────────────────────────────────────────────────────────────
-WebClientB closes tab:
-Go Backend Server  ← Detects closed socket, removes participant
-                    → WS Broadcast: { type: "participant-left", data: { participantId: "Bob" } }
-
-WebClientA         ← Updates participant list
-ExtensionA         ← Updates participant list in overlay
-
-If room empty → server deletes room entry from memory
-
-────────────────────────────────────────────────────────────────────────────────────────────
-
-★ 10. BACKEND RESTART
-────────────────────────────────────────────────────────────────────────────────────────────
-All data wiped (stateless by design)
-WebClientA         → Detects WS disconnect → tries reconnect (with backoff)
-ExtensionA         → Detects WS disconnect → tries reconnect (with backoff)
-On reconnect:
-  → WS: { type: "join-room", roomId: "room_12345", username: "Alice" }
-
-Server rebuilds room state dynamically from reconnecting clients.
-────────────────────────────────────────────────────────────────────────────────────────────
+  A -->|"HTTPS + WSS"| CF
+  B -->|"HTTPS + WSS"| CF
+  CF --> ST
+  CF --> REST
+  CF --> WSH
+  ST -.->|"serves SPA"| A
+  ST -.->|"serves SPA"| B
+  REST --> DB
+  WSH --> DB
+  WSM <-->|"video-sync, chat, presence, signaling"| WSH
+  A <-->|"WebRTC P2P - camera / mic"| B
+  A -.->|"ICE"| ICE
+  B -.->|"ICE"| ICE
+  VP -.->|"loads player"| YT
 ```
 
 ## How to Use
@@ -393,13 +198,9 @@ npm run start-backend    # Go serves it at http://localhost:8080
 
 ## Supported Platforms
 
-- Netflix
-- Hulu
-- YouTube
-- Disney+
-- Amazon Prime Video
-- HBO Max
-- Generic HTML5 video players
+**Web app (no extension needed):** YouTube, Vimeo, and direct video URLs (`.mp4`, etc.)
+
+**Via the optional Chrome extension (DRM sites):** Netflix, Disney+, Amazon Prime Video, Hulu, HBO Max, Paramount+, Peacock
 
 ## Technical Details
 
@@ -415,31 +216,35 @@ extension/
 
 ### Backend API
 
-**WebSocket Endpoints:**
-- `ws://localhost:8080/ws` - Main WebSocket connection
+**REST**
+- `POST /create-room` — create a room; an optional `roomName` becomes a friendly slug id (e.g. `movie-night`)
+- `POST /join-room` — join by room id or friendly name
+- `GET /rooms` — list active rooms
+- `GET /health` — health check
+- `GET /ext-test` — a local HTML5‑video page for exercising the extension
+- `GET /*` — serves the built web app (with SPA fallback for client routes)
 
-**REST Endpoints:**
-- `POST /create-room` - Create a new room
-- `POST /join-room` - Join an existing room
-- `GET /rooms` - List all rooms
-- `GET /health` - Health check
+**WebSocket** — `ws(s)://<origin>/ws?room=<id>&user=<name>`
 
-### WebSocket Message Types
-
-- `join-room` - Join a room
-- `leave-room` - Leave a room
-- `video-sync` - Video playback synchronization
-- `chat-message` - Chat messages
-- `participant-joined` - New participant notification
-- `participant-left` - Participant left notification
+| Message | Purpose |
+|---|---|
+| `join-room` / `leave-room` | Join / leave a room (join is sent on connect and reconnect) |
+| `room-joined` | Initial state: participants, chat history, video state |
+| `participant-joined` / `participant-left` | Presence (leave fires after a short grace period) |
+| `video-sync` | Play / pause / seek / url — broadcast to the room **except the sender** |
+| `chat-message` | Chat messages + join/leave system notices |
+| `webrtc-offer` / `webrtc-answer` / `webrtc-ice-candidate` | WebRTC signaling relay (media stays peer‑to‑peer) |
+| `webrtc-call-started` / `webrtc-call-ended` | Camera on/off notifications |
+| `ping` / `pong` | Keep‑alive |
 
 ## Configuration
 
 ### Backend Configuration
-- **Port**: 8080 (configurable in `backend/main.go`)
-- **Max Rooms**: 5 concurrent rooms
-- **Max Users per Room**: 15 users
-- **CORS**: Enabled for all origins (development)
+- **Port**: `8080` (env `PORT`)
+- **Database**: `./cinewatchbuddy.db` SQLite (env `DATABASE_PATH`); room / chat / video state is persisted and restored on restart
+- **Web app dir**: `../web/dist` (env `WEB_DIR`)
+- **Max users per room**: 15
+- Inactive rooms and participants are cleaned up automatically
 
 ### Extension Configuration
 - **Supported Sites**: Configured in `manifest.json`
@@ -448,18 +253,18 @@ extension/
 
 ## Security & Privacy
 
-- **No DRM Circumvention**: Uses companion mode for protected content
-- **Ephemeral Data**: No persistent storage, all data cleared on restart
-- **TLS Required**: Secure WebSocket connections
-- **Minimal Permissions**: Only necessary browser permissions
+- **No DRM Circumvention**: uses companion mode for protected content (the extension never bypasses DRM)
+- **Minimal Data**: no user accounts; usernames are ephemeral. Rooms/chat/video state persist in a local SQLite file and inactive rooms are cleaned up automatically
+- **TLS in transit**: served over HTTPS/WSS behind the Cloudflare Tunnel (or any TLS reverse proxy)
+- **Minimal Permissions**: the extension requests only `activeTab`, `storage`, and `scripting`
 
 ## Limitations
 
-- Maximum 15 users per room
-- Maximum 5 concurrent rooms (75 total users)
-- No persistent data storage
-- Requires active internet connection
-- Some streaming services may have restrictions
+- 15 users per room (enforced on the REST join path)
+- No accounts — usernames are ephemeral per room; room/chat/video state lives in SQLite + memory
+- Quick Cloudflare Tunnels are for testing only (random URL, no uptime guarantee)
+- Peer-to-peer camera/mic depends on WebRTC connectivity between the two networks (STUN/TURN)
+- DRM sync needs the Chrome extension **and** the streaming site's own subscription
 
 ## Troubleshooting
 
@@ -496,155 +301,23 @@ Enable debug logging by opening browser developer tools and checking the console
 
 MIT License - see LICENSE file for details
 
-## Manual Testing Guide
+## Testing / verifying
 
-### Prerequisites Setup
-1. **Install Go dependencies**
-   ```bash
-   cd src/server
-   go mod tidy
-   ```
+The quickest end‑to‑end check needs two browser windows (or two devices):
 
-2. **Install Node.js dependencies**
-   ```bash
-   npm install
-   ```
+1. Follow **How to Use** to start the backend and web client.
+2. In window A, create a room (optionally name it, e.g. `movie-night`) and copy the invite link.
+3. In window B, open the invite link (or Join by the room name) with a different username.
+   - Window A should show **2 watching** and a "joined" note in chat.
+4. In A, paste a YouTube / Vimeo / direct URL and **Load Video** → it appears in B too.
+5. **Play / pause / seek** in either window → the other stays in sync (both directions).
+6. Send a **chat** message → it appears for both; toggle the Chat panel off/on → history persists.
+7. Click **Start camera** in both → each sees the other in the Camera panel (allow camera/mic).
+8. Restart the backend → rejoin the room; chat history and video state are restored.
 
-3. **Build the extension**
-   ```bash
-   npm run build
-   ```
-
-### Step 1: Load Chrome Extension
-1. **Open Chrome Extensions page**
-   - Go to `chrome://extensions/`
-   - Enable "Developer mode" (toggle in top-right)
-
-2. **Load the extension**
-   - Click "Load unpacked"
-   - Navigate to `F:\RESUME\Assignments\CineWatchBuddy\dist` folder
-   - Select the folder and click "Select Folder"
-
-3. **Verify extension loaded**
-   - You should see "CineWatchBuddy" extension in the list
-   - Pin the extension to your toolbar (click the puzzle piece icon)
-   - The CineWatchBuddy icon should appear in your toolbar
-
-### Step 2: Start Backend Server
-1. **Open PowerShell/Terminal**
-   ```bash
-   cd src/server
-   go run main.go
-   ```
-
-2. **Verify server started**
-   - You should see: "Starting CineWatchBuddy server on port 8080"
-   - Database should be created: "Database: ./CineWatchBuddy.db"
-   - Server should show: "Loaded X rooms from database"
-
-### Step 3: Test Web Client
-1. **Open web client**
-   - Go to `http://localhost:8080` in Chrome
-   - You should see the CineWatchBuddy landing page
-
-2. **Create a room**
-   - Enter username: "TestUser1"
-   - Click "Create Room"
-   - You should see a room page with video player and chat
-
-3. **Test video playback**
-   - Paste a YouTube URL (e.g., `https://www.youtube.com/watch?v=dQw4w9WgXcQ`)
-   - Click "Load" button
-   - Video should start playing
-
-### Step 4: Test Extension Integration
-1. **Open a DRM site**
-   - Go to Netflix, Disney+, or Prime Video
-   - The extension should automatically detect the page
-
-2. **Check extension status**
-   - Click the CineWatchBuddy extension icon in toolbar
-   - You should see "Extension Connected" or connection status
-   - The popup should show room information
-
-3. **Test video sync from extension**
-   - Play a video on the DRM site
-   - Check if the web client video syncs (if in same room)
-   - The extension should show sync indicators
-
-### Step 5: Test Cross-Platform Sync
-1. **Open second browser tab**
-   - Go to `http://localhost:8080` in a new tab
-   - Join the same room with username "TestUser2"
-
-2. **Test bidirectional sync**
-   - Play video in web client → should sync to extension
-   - Play video in extension → should sync to web client
-   - Test play/pause/seek in both directions
-
-### Step 6: Test Chat Functionality
-1. **Web client chat**
-   - Send messages from web client chat panel
-   - Messages should appear in real-time
-
-2. **Extension chat**
-   - Click the chat button in extension popup
-   - Send messages from extension
-   - Messages should appear in web client
-
-### Step 7: Test WebRTC Video Calls
-1. **Start video call**
-   - In web client, click "Start Video Call"
-   - Allow camera/microphone permissions
-   - Video call interface should appear
-
-2. **Test call features**
-   - Mute/unmute microphone
-   - Turn video on/off
-   - End call functionality
-
-### Step 8: Test Room Persistence
-1. **Restart backend server**
-   - Stop the Go server (Ctrl+C)
-   - Start it again: `go run main.go`
-   - Server should restore previous rooms
-
-2. **Rejoin room**
-   - Refresh the web client page
-   - Rejoin the same room
-   - Chat history should be restored
-
-### Step 9: Test Error Handling
-1. **Network disconnection**
-   - Disconnect internet briefly
-   - Extension should show "Reconnecting..." status
-   - Reconnect and verify sync resumes
-
-2. **Invalid room ID**
-   - Try joining a non-existent room
-   - Should show appropriate error message
-
-### Expected Results 
-- **Extension loads successfully** in Chrome
-- **Web client accessible** at localhost:8080
-- **Video sync works** between web client and extension
-- **Chat messages** appear in real-time across platforms
-- **WebRTC calls** work with camera/microphone
-- **Room persistence** survives server restarts
-- **Error handling** works gracefully
-
-### Troubleshooting
-- **Extension not loading**: Check if `dist` folder exists and has manifest.json
-- **Server won't start**: Ensure port 8080 is not in use
-- **Video not syncing**: Check browser console for WebSocket errors
-- **Chat not working**: Verify WebSocket connection is active
-- **WebRTC not working**: Check camera/microphone permissions
-
-### Debug Tips
-- Open Chrome DevTools (F12) to see console logs
-- Check extension popup for connection status
-- Monitor network tab for WebSocket connections
-- Use `chrome://extensions/` to reload extension after changes
+**Sharing with a friend over the internet:** run `cloudflared tunnel --url http://localhost:8080`
+and send them the `https://<name>.trycloudflare.com` URL — no install, no localhost. (Keep the
+backend and tunnel running; closing them takes the URL down.)
 
 ## Support
 
