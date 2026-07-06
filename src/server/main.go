@@ -761,9 +761,10 @@ func (s *Server) handleVideoSync(clientID string, data interface{}) {
 	// Update database
 	s.db.UpdateVideoState(roomID, videoState)
 
-	// Broadcast to room
-	log.Printf("Broadcasting video sync to room %s", roomID)
-	s.broadcastToRoom(roomID, WebSocketMessage{
+	// Broadcast to everyone in the room EXCEPT the sender. Echoing a video-sync
+	// back to its sender makes the sender re-apply its own play/pause, which
+	// (with tunnel latency) ping-pongs the play state between participants.
+	s.broadcastToRoomExcept(roomID, clientID, WebSocketMessage{
 		Type: "video-sync",
 		Data: map[string]interface{}{
 			"url":          videoState.VideoURL,
@@ -988,8 +989,13 @@ func (s *Server) sendToClient(clientID string, msg WebSocketMessage) {
 }
 
 func (s *Server) broadcastToRoom(roomID string, msg WebSocketMessage) {
-    // Snapshot the target client IDs under the lock, then write OUTSIDE the lock
-    // so a blocked write to one client can't stall everyone else.
+    s.broadcastToRoomExcept(roomID, "", msg)
+}
+
+// broadcastToRoomExcept sends to every client in the room except exceptClientID
+// (pass "" to send to all). Targets are snapshotted under the lock and written
+// outside it so a blocked write to one client can't stall everyone else.
+func (s *Server) broadcastToRoomExcept(roomID, exceptClientID string, msg WebSocketMessage) {
     s.mutex.RLock()
     if _, exists := s.rooms[roomID]; !exists {
         s.mutex.RUnlock()
@@ -997,6 +1003,9 @@ func (s *Server) broadcastToRoom(roomID string, msg WebSocketMessage) {
     }
     targets := make([]string, 0, len(s.clients))
     for clientID := range s.clients {
+        if clientID == exceptClientID {
+            continue
+        }
         if s.clientRooms[clientID] == roomID {
             targets = append(targets, clientID)
         }

@@ -1,356 +1,149 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { websocketManager } from '../utils/websocketManager'
 
+const isYouTubeUrl = (url) => /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url || '')
+const extractYouTubeId = (url) => {
+  try {
+    const u = new URL(url)
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1)
+    return u.searchParams.get('v')
+  } catch { return null }
+}
+const ensureYouTubeAPI = () => new Promise((resolve) => {
+  if (window.YT && window.YT.Player) return resolve()
+  const tag = document.createElement('script')
+  tag.src = 'https://www.youtube.com/iframe_api'
+  document.body.appendChild(tag)
+  const prev = window.onYouTubeIframeAPIReady
+  window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve() }
+})
+
 const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
-  const [videoUrl, setVideoUrl] = useState('')
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [volume, setVolume] = useState(1)
-  const [isHost, setIsHost] = useState(false)
-  const [ws, setWs] = useState(null)
-  const [isConnected, setIsConnected] = useState(false)
-  const [isSyncingVideo, setIsSyncingVideo] = useState(false)
-  
-  const videoRef = useRef(null)
-  const playerRef = useRef(null)
-  const ytPlayerRef = useRef(null)
+  const [inputUrl, setInputUrl] = useState('')   // text field (controlled)
+  const [videoUrl, setVideoUrl] = useState('')   // committed / currently loaded url
   const [isYouTube, setIsYouTube] = useState(false)
-  const isUserAction = useRef(false)
-  // Suppress OUTGOING sync while (and shortly after) we apply a remote update.
-  // Applying a play/pause/seek fires the local media events, which would
-  // otherwise re-broadcast and, with tunnel latency, storm the socket until it
-  // drops — making participants appear to get kicked out.
-  const remoteUntil = useRef(0)
-  // Mirror state into refs so the once-bound WS handler reads CURRENT values
-  // (otherwise it sees the initial empty videoUrl and reloads on every sync).
-  const videoUrlRef = useRef('')
+  const [isSyncingVideo, setIsSyncingVideo] = useState(false)
+
+  const videoRef = useRef(null)
+  const ytPlayerRef = useRef(null)
+  // While Date.now() < applyingUntil, we are applying a REMOTE update, so any
+  // local media events it triggers must NOT be broadcast back (prevents the
+  // play/pause echo/ping-pong). This is the only sync guard.
+  const applyingUntil = useRef(0)
+  const pendingLoad = useRef(null)   // url to load once the player element renders
   const isYouTubeRef = useRef(false)
+  const loadedUrlRef = useRef('')
 
+  // ---- connection + incoming messages ----
   useEffect(() => {
-    // Connect to shared WebSocket
-    websocketManager.connect(roomId, username).then(() => {
-      setIsConnected(true)
-      onConnectionChange(true)
-    }).catch(error => {
-      console.error('Failed to connect WebSocket:', error)
-      setIsConnected(false)
-      onConnectionChange(false)
-    })
-
-    // Listen to shared WebSocket messages
-    const handleMessage = (event) => {
-      handleWebSocketMessage(event.detail)
-    }
-
+    websocketManager.connect(roomId, username)
+      .then(() => onConnectionChange && onConnectionChange(true))
+      .catch((e) => { console.error('WS connect failed', e); onConnectionChange && onConnectionChange(false) })
+    const handleMessage = (e) => handleWebSocketMessage(e.detail)
     window.addEventListener('cinewatchbuddy-message', handleMessage)
-
-    return () => {
-      window.removeEventListener('cinewatchbuddy-message', handleMessage)
-    }
+    return () => window.removeEventListener('cinewatchbuddy-message', handleMessage)
   }, [roomId, username])
 
-  // Auto-load video when URL changes (for synced videos)
+  // Load the committed url once the player element exists (runs after render, so
+  // the YouTube #yt-player div is present). Only loads urls set via commitUrl().
   useEffect(() => {
-    if (videoUrl && !isUserAction.current) {
-      console.log('🎥 Video URL changed, auto-loading:', videoUrl)
-      if (isYouTube) {
-        loadYouTube(videoUrl)
-      } else if (videoRef.current) {
-        videoRef.current.src = videoUrl
-        videoRef.current.load()
-      }
-    }
+    isYouTubeRef.current = isYouTube
+    const url = pendingLoad.current
+    if (!url || url !== videoUrl) return
+    pendingLoad.current = null
+    loadedUrlRef.current = url
+    if (isYouTube) loadYouTube(url)
+    else if (videoRef.current) { videoRef.current.src = url; videoRef.current.load() }
   }, [videoUrl, isYouTube])
 
-  useEffect(() => { videoUrlRef.current = videoUrl }, [videoUrl])
-  useEffect(() => { isYouTubeRef.current = isYouTube }, [isYouTube])
-
-  const handleWebSocketMessage = (data) => {
-    switch (data.type) {
-      case 'video-sync':
-        if (data.data && !isUserAction.current) {
-          // Entering apply mode: hold off on any outgoing sync for a bit so the
-          // events our own play/pause/seek trigger don't echo back to the room.
-          remoteUntil.current = Date.now() + 1200
-          const { currentTime: syncTime, paused, volume: syncVolume, url: videoUrlFromSync } = data.data
-          const url = videoUrlFromSync || data.data.videoUrl
-          console.log('🎥 Received video sync:', { url, currentTime: syncTime, paused })
-          
-          // Handle URL change first (compare against the ref, not stale state)
-          if (url && url !== videoUrlRef.current) {
-            console.log('🎥 Syncing video URL from another participant:', url)
-            setIsSyncingVideo(true)
-            setVideoUrl(url)
-            videoUrlRef.current = url
-            setIsYouTube(isYouTubeUrl(url))
-            isYouTubeRef.current = isYouTubeUrl(url)
-            
-            // Automatically load the video for other participants
-            if (isYouTubeUrl(url)) {
-              console.log('🎥 Auto-loading YouTube video for other participants')
-              loadYouTube(url)
-            } else if (videoRef.current) {
-              console.log('🎥 Auto-loading regular video for other participants')
-              videoRef.current.src = url
-              videoRef.current.load()
-            }
-            
-            // Hide syncing indicator after video loads
-            setTimeout(() => {
-              setIsSyncingVideo(false)
-            }, 2000)
-          }
-          
-          // Update UI state for all video types
-          setIsPlaying(!paused)
-          
-          if (isYouTubeRef.current && ytPlayerRef.current) {
-            if (url && playerRef.current !== url) {
-              loadYouTube(url)
-            }
-            const targetTime = syncTime || 0
-            const state = ytPlayerRef.current.getPlayerState()
-            const current = ytPlayerRef.current.getCurrentTime()
-            if (Math.abs(current - targetTime) > 0.5) {
-              ytPlayerRef.current.seekTo(targetTime, true)
-            }
-            if (paused && (state === 1 || state === 3)) {
-              ytPlayerRef.current.pauseVideo()
-            } else if (!paused && state !== 1) {
-              ytPlayerRef.current.playVideo()
-            }
-            if (syncVolume !== undefined && ytPlayerRef.current.getVolume() !== syncVolume * 100) {
-              ytPlayerRef.current.setVolume(syncVolume * 100)
-            }
-          } else if (videoRef.current) {
-            // Sync video URL if different
-            if (url && videoRef.current.src !== url) {
-              console.log('🎥 Setting video source to:', url)
-              videoRef.current.src = url
-              videoRef.current.load()
-            }
-            
-            // Sync playback position (only if difference is significant)
-            if (Math.abs(videoRef.current.currentTime - syncTime) > 0.5) {
-              videoRef.current.currentTime = syncTime
-            }
-            
-            // Sync play/pause state
-            if (videoRef.current.paused !== paused) {
-              if (paused) {
-                videoRef.current.pause()
-              } else {
-                videoRef.current.play().catch(console.error)
-              }
-            }
-            
-            // Sync volume
-            if (Math.abs(videoRef.current.volume - syncVolume) > 0.1) {
-              videoRef.current.volume = syncVolume
-              setVolume(syncVolume)
-            }
-          }
-        }
-        break
-      case 'room-joined':
-        // Handle room joined with current state
-        if (data.data) {
-          const { room, currentVideo, chatHistory } = data.data
-          // Room state is handled by parent component
-          
-          // Apply current video state if available
-          if (currentVideo) {
-            const videoUrl = currentVideo.url || currentVideo.VideoURL || currentVideo.videoUrl
-            if (videoUrl) {
-              // Only suppress echoes when there's real state to apply, so a
-              // fresh joiner's own first action isn't swallowed.
-              remoteUntil.current = Date.now() + 1200
-              setVideoUrl(videoUrl)
-              if (isYouTubeUrl(videoUrl)) {
-                loadYouTube(videoUrl)
-              } else if (videoRef.current) {
-                videoRef.current.src = videoUrl
-                videoRef.current.load()
-              }
-            }
-            
-            if (currentVideo.currentTime && videoRef.current) {
-              videoRef.current.currentTime = currentVideo.currentTime
-            }
-            
-            const isPaused = currentVideo.paused !== undefined ? currentVideo.paused : !currentVideo.isPlaying
-            if (isPaused !== undefined) {
-              if (isPaused) {
-                if (videoRef.current) {
-                  videoRef.current.pause()
-                }
-                setIsPlaying(false)
-              } else {
-                if (videoRef.current) {
-                  videoRef.current.play().catch(console.error)
-                }
-                setIsPlaying(true)
-              }
-            }
-            
-            if (currentVideo.volume !== undefined && videoRef.current) {
-              videoRef.current.volume = currentVideo.volume
-              setVolume(currentVideo.volume)
-            }
-          }
-        }
-        break
-      case 'participant-joined':
-      case 'participant-left':
-        // Handle participant updates
-        break
-    }
+  const commitUrl = (url) => {
+    setInputUrl(url)
+    setVideoUrl(url)
+    setIsYouTube(isYouTubeUrl(url))
+    isYouTubeRef.current = isYouTubeUrl(url)
+    pendingLoad.current = url // the effect above loads it after render
   }
 
   const sendVideoSync = (data) => {
-    // Don't echo a change we just applied from a remote sync.
-    if (Date.now() < remoteUntil.current) {
-      return
-    }
-    const message = {
+    if (Date.now() < applyingUntil.current) return // don't echo a remote-applied change
+    websocketManager.send('video-sync', {
       ...data,
-      url: data.url || videoUrl, // Use the URL from data if provided, otherwise use current videoUrl
-      roomId,
-      username,
-      timestamp: Date.now()
-    }
-    console.log('🎥 Sending video-sync message:', message)
-    const success = websocketManager.send('video-sync', message)
-    console.log('🎥 Video sync sent, success:', success)
+      url: data.url ?? loadedUrlRef.current,
+      roomId, username, timestamp: Date.now()
+    })
   }
 
-  const handlePlay = () => {
-    if (videoRef.current) {
-      isUserAction.current = true
-      videoRef.current.play().catch(console.error)
-      setIsPlaying(true)
-      sendVideoSync({ currentTime: videoRef.current.currentTime, paused: false, volume: videoRef.current.volume })
-      setTimeout(() => { isUserAction.current = false }, 100)
+  const handleWebSocketMessage = (data) => {
+    if (data.type === 'video-sync' && data.data) {
+      applyRemote(data.data)
+    } else if (data.type === 'room-joined' && data.data && data.data.currentVideo) {
+      const cv = data.data.currentVideo
+      applyRemote({
+        url: cv.url || cv.VideoURL || cv.videoUrl,
+        currentTime: cv.currentTime, paused: cv.paused, volume: cv.volume
+      })
     }
   }
 
-  const handlePause = () => {
-    if (videoRef.current) {
-      isUserAction.current = true
-      videoRef.current.pause()
-      setIsPlaying(false)
-      sendVideoSync({ currentTime: videoRef.current.currentTime, paused: true, volume: videoRef.current.volume })
-      setTimeout(() => { isUserAction.current = false }, 100)
+  const applyRemote = (d) => {
+    // Suppress the local media events our apply is about to trigger.
+    applyingUntil.current = Date.now() + 800
+    const url = d.url || d.videoUrl
+    const paused = d.paused
+    const t = typeof d.currentTime === 'number' ? d.currentTime : null
+    const vol = typeof d.volume === 'number' ? d.volume : null
+
+    if (url && url !== loadedUrlRef.current && url !== videoUrl) {
+      setIsSyncingVideo(true)
+      commitUrl(url)
+      setTimeout(() => setIsSyncingVideo(false), 2000)
+    }
+
+    if (isYouTubeRef.current && ytPlayerRef.current) {
+      const yt = ytPlayerRef.current
+      const state = yt.getPlayerState ? yt.getPlayerState() : -1
+      if (t != null && Math.abs((yt.getCurrentTime ? yt.getCurrentTime() : 0) - t) > 1.0) yt.seekTo(t, true)
+      if (paused === true && (state === 1 || state === 3)) yt.pauseVideo()
+      else if (paused === false && state !== 1) yt.playVideo()
+      if (vol != null && Math.abs((yt.getVolume ? yt.getVolume() : 0) / 100 - vol) > 0.05) yt.setVolume(vol * 100)
+    } else if (videoRef.current) {
+      const v = videoRef.current
+      if (t != null && Math.abs(v.currentTime - t) > 0.75) { try { v.currentTime = t } catch (e) {} }
+      if (paused === true && !v.paused) v.pause()
+      else if (paused === false && v.paused) v.play().catch(() => {})
+      if (vol != null && Math.abs(v.volume - vol) > 0.05) v.volume = vol
     }
   }
 
-  const handleSeeked = () => {
-    isUserAction.current = true
-    setCurrentTime(videoRef.current.currentTime)
-    sendVideoSync({ currentTime: videoRef.current.currentTime, paused: videoRef.current.paused, volume: videoRef.current.volume })
-    setTimeout(() => { isUserAction.current = false }, 100)
-  }
-
-  const handleTimeUpdate = () => {
-    setCurrentTime(videoRef.current.currentTime)
-  }
-
-  const handleLoadedMetadata = () => {
-    setDuration(videoRef.current.duration)
-  }
-
+  // ---- local <video> events (also fire when WE apply a remote sync — the
+  // applyingUntil guard suppresses those from re-broadcasting) ----
+  const handlePlay = () => { if (videoRef.current) sendVideoSync({ currentTime: videoRef.current.currentTime, paused: false, volume: videoRef.current.volume }) }
+  const handlePause = () => { if (videoRef.current) sendVideoSync({ currentTime: videoRef.current.currentTime, paused: true, volume: videoRef.current.volume }) }
+  const handleSeeked = () => { if (videoRef.current) sendVideoSync({ currentTime: videoRef.current.currentTime, paused: videoRef.current.paused, volume: videoRef.current.volume }) }
 
   const handleUrlSubmit = (e) => {
     e.preventDefault()
-    if (videoUrl.trim()) {
-      const url = videoUrl.trim()
-      
-      // Set user action flag to prevent auto-loading conflicts
-      isUserAction.current = true
-      
-      setVideoUrl(url)
-      setIsYouTube(isYouTubeUrl(url))
-      
-      console.log('🎥 User loading video URL:', url, 'isYouTube:', isYouTubeUrl(url))
-      
-      // Sync video URL change to other participants
-      const syncData = { 
-        url: url, 
-        currentTime: 0, 
-        paused: true, 
-        volume: videoRef.current?.volume || 1 
-      }
-      console.log('🎥 Sending video sync:', syncData)
-      sendVideoSync(syncData)
-      
-      // Load the video for the current user
-      if (isYouTubeUrl(url)) {
-        loadYouTube(url)
-      } else if (videoRef.current) {
-        videoRef.current.src = url
-        videoRef.current.load()
-      }
-      
-      // Reset user action flag after a short delay
-      setTimeout(() => {
-        isUserAction.current = false
-      }, 1000)
-    }
+    const url = inputUrl.trim()
+    if (!url) return
+    commitUrl(url)
+    // A URL load is a genuine user action; broadcast it.
+    sendVideoSync({ url, currentTime: 0, paused: true, volume: videoRef.current ? videoRef.current.volume : 1 })
   }
-
-  const isYouTubeUrl = (url) => /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url)
-
-  const extractYouTubeId = (url) => {
-    try {
-      const u = new URL(url)
-      if (u.hostname.includes('youtu.be')) return u.pathname.slice(1)
-      return u.searchParams.get('v')
-    } catch { return null }
-  }
-
-  const ensureYouTubeAPI = () => new Promise((resolve) => {
-    if (window.YT && window.YT.Player) return resolve()
-    const tag = document.createElement('script')
-    tag.src = 'https://www.youtube.com/iframe_api'
-    document.body.appendChild(tag)
-    window.onYouTubeIframeAPIReady = () => resolve()
-  })
 
   const loadYouTube = async (url) => {
     const id = extractYouTubeId(url)
     if (!id) return
-    setIsYouTube(true)
     await ensureYouTubeAPI()
     if (!ytPlayerRef.current) {
       ytPlayerRef.current = new window.YT.Player('yt-player', {
         videoId: id,
         events: {
           onStateChange: (e) => {
+            const yt = ytPlayerRef.current
             if (e.data === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true)
-              // Send sync message for YouTube play
-              if (!isUserAction.current) {
-                isUserAction.current = true
-                sendVideoSync({ 
-                  currentTime: ytPlayerRef.current.getCurrentTime(), 
-                  paused: false, 
-                  volume: ytPlayerRef.current.getVolume() / 100 
-                })
-                setTimeout(() => { isUserAction.current = false }, 100)
-              }
+              sendVideoSync({ currentTime: yt.getCurrentTime(), paused: false, volume: yt.getVolume() / 100 })
             } else if (e.data === window.YT.PlayerState.PAUSED) {
-              setIsPlaying(false)
-              // Send sync message for YouTube pause
-              if (!isUserAction.current) {
-                isUserAction.current = true
-                sendVideoSync({ 
-                  currentTime: ytPlayerRef.current.getCurrentTime(), 
-                  paused: true, 
-                  volume: ytPlayerRef.current.getVolume() / 100 
-                })
-                setTimeout(() => { isUserAction.current = false }, 100)
-              }
+              sendVideoSync({ currentTime: yt.getCurrentTime(), paused: true, volume: yt.getVolume() / 100 })
             }
           }
         }
@@ -358,12 +151,6 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
     } else {
       ytPlayerRef.current.loadVideoById(id)
     }
-  }
-
-  const formatTime = (time) => {
-    const minutes = Math.floor(time / 60)
-    const seconds = Math.floor(time % 60)
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`
   }
 
   return (
@@ -374,11 +161,11 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-10">
             <div className="text-center text-white">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-              <p className="text-lg font-semibold">Syncing video from another participant...</p>
+              <p className="text-lg font-semibold">Syncing video from another participant…</p>
             </div>
           </div>
         )}
-        
+
         {videoUrl && isYouTube ? (
           <div id="yt-player" className="w-full h-full max-w-full max-h-full"></div>
         ) : videoUrl ? (
@@ -389,8 +176,6 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
             onPlay={handlePlay}
             onPause={handlePause}
             onSeeked={handleSeeked}
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleLoadedMetadata}
             controls
           />
         ) : (
@@ -411,8 +196,8 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
         <form onSubmit={handleUrlSubmit} className="flex gap-2">
           <input
             type="url"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
+            value={inputUrl}
+            onChange={(e) => setInputUrl(e.target.value)}
             placeholder="Paste YouTube, Vimeo, or direct video URL..."
             className="input flex-1"
           />
@@ -421,7 +206,6 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           </button>
         </form>
       </div>
-
     </div>
   )
 }
