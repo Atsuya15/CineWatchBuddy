@@ -11,16 +11,19 @@ class WebSocketManager {
   }
 
   connect(roomId, username) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.roomId === roomId) {
-      console.log('WebSocket already connected for room:', roomId)
-      return Promise.resolve()
+    // Reuse the existing socket if it's already open or in the middle of
+    // connecting for the same room (multiple components share this singleton).
+    if (this.ws && this.roomId === roomId &&
+        (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      console.log('WebSocket already connected/connecting for room:', roomId)
+      return this.connectPromise || Promise.resolve()
     }
 
     this.roomId = roomId
     this.username = username
     this.isConnecting = true
 
-    return new Promise((resolve, reject) => {
+    this.connectPromise = new Promise((resolve, reject) => {
       try {
         const wsHost = `${window.location.hostname || 'localhost'}:8080`
         const wsUrl = `ws://${wsHost}/ws?room=${roomId}&user=${encodeURIComponent(username)}`
@@ -32,6 +35,10 @@ class WebSocketManager {
           this.isConnecting = false
           this.reconnectAttempts = 0
           this.reconnectDelay = 1000
+          // Register as a room participant. This is what makes the server emit
+          // room-joined (chat history, participant list, video state) and
+          // broadcast participant-joined/left to everyone else.
+          this.send('join-room', { roomId, username })
           resolve()
         }
 
@@ -66,6 +73,8 @@ class WebSocketManager {
         reject(error)
       }
     })
+
+    return this.connectPromise
   }
 
   scheduleReconnect() {
@@ -104,6 +113,7 @@ class WebSocketManager {
     this.roomId = null
     this.username = null
     this.reconnectAttempts = 0
+    this.connectPromise = null
   }
 }
 

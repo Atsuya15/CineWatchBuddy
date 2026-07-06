@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { websocketManager } from '../utils/websocketManager'
 
-const ChatPanel = ({ roomId, username }) => {
+const ChatPanel = ({ roomId, username, showHeader = true }) => {
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
   const [ws, setWs] = useState(null)
@@ -126,9 +126,11 @@ const ChatPanel = ({ roomId, username }) => {
   return (
     <div className="h-full flex flex-col">
       {/* Chat header */}
-      <div className="p-4 border-b border-gray-700">
-        <h3 className="font-semibold">Chat</h3>
-      </div>
+      {showHeader && (
+        <div className="p-4 border-b border-gray-700">
+          <h3 className="font-semibold">Chat</h3>
+        </div>
+      )}
 
       {/* Messages */}
       <div
@@ -160,8 +162,8 @@ const ChatPanel = ({ roomId, username }) => {
                 <div
                   className={`max-w-xs px-3 py-2 rounded-lg ${
                     message.username === username
-                      ? 'bg-red-600 text-white'
-                      : 'bg-gray-700 text-gray-100'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-800 text-gray-100'
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">

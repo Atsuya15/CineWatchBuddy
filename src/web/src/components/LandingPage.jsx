@@ -105,69 +105,76 @@ const LandingPage = () => {
   }, [])
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="card w-full max-w-md">
-        <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold mb-2">🎬 CineWatchBuddy</h1>
-          <p className="text-gray-400">Watch videos together with friends</p>
+    <div className="min-h-screen bg-black text-white flex items-center justify-center p-4 relative overflow-hidden">
+      {/* ambient blue glow */}
+      <div className="pointer-events-none absolute -top-40 -left-40 w-[32rem] h-[32rem] rounded-full bg-blue-600/20 blur-[120px]"></div>
+      <div className="pointer-events-none absolute -bottom-40 -right-40 w-[32rem] h-[32rem] rounded-full bg-blue-500/10 blur-[120px]"></div>
+
+      <div className="relative w-full max-w-md">
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold tracking-tight mb-2">
+            <span className="text-blue-500">Cine</span>WatchBuddy
+          </h1>
+          <p className="text-gray-400">Watch videos together, in perfect sync.</p>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your username"
-              className="input"
-              maxLength={20}
-            />
-          </div>
+        <div className="bg-gray-950/80 backdrop-blur border border-gray-800 rounded-2xl p-6 shadow-2xl shadow-black/50">
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-300">Your name</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter a username"
+                className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-gray-800 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                maxLength={20}
+              />
+            </div>
 
-          <div className="space-y-3">
             <button
               onClick={handleCreateRoom}
               disabled={isCreating || isJoining}
-              className="btn btn-primary w-full"
+              className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-colors"
             >
-              {isCreating ? 'Creating...' : 'Create Room'}
+              {isCreating ? 'Creating…' : 'Create a room'}
             </button>
 
-            <div className="flex items-center">
-              <div className="flex-1 h-px bg-gray-600"></div>
-              <span className="px-3 text-gray-400 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-600"></div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-gray-800"></div>
+              <span className="text-gray-600 text-xs uppercase tracking-wider">or join</span>
+              <div className="flex-1 h-px bg-gray-800"></div>
             </div>
 
-            <div>
+            <div className="flex gap-2">
               <input
                 type="text"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
-                placeholder="Enter room ID"
-                className="input mb-3"
+                placeholder="Room ID"
+                className="flex-1 min-w-0 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleJoinRoom() }}
               />
               <button
                 onClick={handleJoinRoom}
                 disabled={isCreating || isJoining}
-                className="btn btn-secondary w-full"
+                className="px-5 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 disabled:opacity-50 font-semibold transition-colors"
               >
-                {isJoining ? 'Joining...' : 'Join Room'}
+                {isJoining ? 'Joining…' : 'Join'}
               </button>
             </div>
-          </div>
 
-          {error && (
-            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm">
-              {error}
-            </div>
-          )}
+            {error && (
+              <div className="bg-red-950/40 border border-red-500/40 rounded-xl p-3 text-red-300 text-sm">
+                {error}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="mt-8 text-center text-sm text-gray-400">
-          <p>Supports YouTube, Vimeo, and more!</p>
-          <p className="mt-1">For Netflix, Disney+, Prime Video, use our Chrome extension</p>
+        <div className="mt-6 text-center text-xs text-gray-500 leading-relaxed">
+          <p>Supports YouTube, Vimeo, and direct video URLs.</p>
+          <p className="mt-1">For Netflix, Disney+ &amp; Prime Video, use the Chrome extension.</p>
         </div>
       </div>
     </div>
