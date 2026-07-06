@@ -1,6 +1,18 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+// Floating cats scattered around the landing page.
+const CATS = [
+  { e: '🐱', left: '7%',  top: '16%', size: 44, dur: 7,  delay: 0 },
+  { e: '😺', left: '86%', top: '20%', size: 52, dur: 9,  delay: 1.2 },
+  { e: '🐈', left: '13%', top: '72%', size: 58, dur: 8,  delay: 0.6 },
+  { e: '😸', left: '80%', top: '74%', size: 40, dur: 10, delay: 1.8 },
+  { e: '🐾', left: '48%', top: '8%',  size: 34, dur: 6,  delay: 0.3 },
+  { e: '😻', left: '92%', top: '52%', size: 38, dur: 11, delay: 2.2 },
+  { e: '🐈', left: '3%',  top: '44%', size: 46, dur: 9,  delay: 1 },
+  { e: '😽', left: '40%', top: '88%', size: 42, dur: 8,  delay: 0.9 }
+]
+
 const LandingPage = () => {
   const [username, setUsername] = useState('')
   const [roomName, setRoomName] = useState('')
@@ -113,12 +125,31 @@ const LandingPage = () => {
       <div className="pointer-events-none absolute -top-40 -left-40 w-[32rem] h-[32rem] rounded-full bg-blue-600/20 blur-[120px]"></div>
       <div className="pointer-events-none absolute -bottom-40 -right-40 w-[32rem] h-[32rem] rounded-full bg-blue-500/10 blur-[120px]"></div>
 
+      {/* floating cats */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {CATS.map((c, i) => (
+          <span
+            key={i}
+            className="absolute select-none drop-shadow-lg"
+            style={{
+              left: c.left, top: c.top, fontSize: `${c.size}px`, opacity: 0.55,
+              animation: `cwb-float ${c.dur}s ease-in-out infinite`,
+              animationDelay: `${c.delay}s`
+            }}
+          >
+            {c.e}
+          </span>
+        ))}
+      </div>
+
       <div className="relative w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold tracking-tight mb-2">
-            <span className="text-blue-500">Cine</span>WatchBuddy
-          </h1>
-          <p className="text-gray-400">Watch videos together, in perfect sync.</p>
+          <img
+            src="/CineWatchBuddyLogo.png"
+            alt="CineWatchBuddy"
+            className="mx-auto w-40 h-40 rounded-2xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10"
+          />
+          <p className="text-gray-400 mt-4">Watch videos together, in perfect sync.</p>
         </div>
 
         <div className="bg-gray-950/80 backdrop-blur border border-gray-800 rounded-2xl p-6 shadow-2xl shadow-black/50">
