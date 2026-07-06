@@ -1,4 +1,4 @@
-// CineBuddy Content Script - Video Detection and Sync
+// CineWatchBuddy Content Script - Video Detection and Sync
 class CineBuddyContentScript {
     // Polyfill for requestIdleCallback to support Firefox
     static setupIdleCallbackPolyfill() {
@@ -24,7 +24,7 @@ class CineBuddyContentScript {
         this.videoSyncCount = 0;
         this.videoSyncResetTime = 0;
         
-        CineBuddyContentScript.setupIdleCallbackPolyfill();
+                CineBuddyContentScript.setupIdleCallbackPolyfill();
         this.init();
     }
 
@@ -216,7 +216,7 @@ class CineBuddyContentScript {
             try {
                 const indicator = document.createElement('div');
                 indicator.className = 'cinebuddy-video-indicator';
-                indicator.textContent = '🎬 CineBuddy Ready';
+                indicator.textContent = '🎬 CineWatchBuddy Ready';
                 video.parentNode.style.position = 'relative';
                 video.parentNode.appendChild(indicator);
             } catch (error) {
@@ -600,7 +600,7 @@ class CineBuddyContentScript {
         
         overlay.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h3 style="margin: 0; font-size: 16px;">🎬 CineBuddy</h3>
+                <h3 style="margin: 0; font-size: 16px;">🎬 CineWatchBuddy</h3>
                 <button id="cinebuddy-close" style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;">×</button>
             </div>
             <div id="cinebuddy-content">

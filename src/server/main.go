@@ -17,7 +17,7 @@ import (
 	"github.com/rs/cors"
 )
 
-// CineBuddy Backend Server with Persistent Storage
+// CineWatchBuddy Backend Server with Persistent Storage
 // Handles room management, WebSocket connections, and video sync with SQLite persistence
 
 type Server struct {
@@ -929,7 +929,7 @@ func main() {
 	http.Handle("/", http.FileServer(http.Dir("../web/dist")))
 
 	// Start server
-	log.Printf("Starting CineBuddy server on port %s", config.Port)
+    log.Printf("Starting CineWatchBuddy server on port %s", config.Port)
 	log.Printf("Database: %s", config.DatabasePath)
 	log.Printf("Loaded %d rooms from database", len(server.rooms))
 

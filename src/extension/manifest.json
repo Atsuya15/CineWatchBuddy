@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "CineBuddy",
+  "name": "CineWatchBuddy",
   "version": "1.0.0",
   "description": "Synchronize video playback across streaming services with friends",
   "permissions": [
@@ -55,7 +55,7 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "CineBuddy",
+    "default_title": "CineWatchBuddy",
     "default_icon": {
       "16": "icon.png",
       "32": "icon.png",

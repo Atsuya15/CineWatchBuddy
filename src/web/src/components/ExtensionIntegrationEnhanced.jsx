@@ -50,7 +50,7 @@ const ExtensionIntegrationEnhanced = ({ roomId, username, onConnectionChange }) 
   // Set up message listeners
   const setupMessageListeners = () => {
     const handleMessage = (event) => {
-      if (event.data?.source !== 'cinebuddy-extension') return
+      if (event.data?.source !== 'cinewatchbuddy-extension') return
       
       const { action, payload, correlationId, error } = event.data
       
@@ -176,7 +176,7 @@ const ExtensionIntegrationEnhanced = ({ roomId, username, onConnectionChange }) 
       
       // Send message
       window.postMessage({
-        source: 'cinebuddy-web',
+        source: 'cinewatchbuddy-web',
         action,
         payload,
         correlationId: id,
@@ -376,7 +376,7 @@ const ExtensionIntegrationEnhanced = ({ roomId, username, onConnectionChange }) 
             ⚠ Extension not detected
           </div>
           <div className="text-xs text-gray-400">
-            Install the CineBuddy extension to sync with DRM content (Netflix, Disney+, etc.)
+            Install the CineWatchBuddy extension to sync with DRM content (Netflix, Disney+, etc.)
           </div>
         </div>
       )}

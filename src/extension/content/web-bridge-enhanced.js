@@ -2,8 +2,8 @@
 (function() {
   'use strict';
   
-  const WEB_SOURCE = 'cinebuddy-web';
-  const EXT_SOURCE = 'cinebuddy-extension';
+  const WEB_SOURCE = 'cinewatchbuddy-web';
+  const EXT_SOURCE = 'cinewatchbuddy-extension';
   const BRIDGE_VERSION = '2.0.0';
   
   // Message queue for offline scenarios
@@ -20,7 +20,7 @@
   
   // Initialize bridge
   function init() {
-    console.log('CineBuddy Web Bridge v' + BRIDGE_VERSION + ' initialized');
+    console.log('CineWatchBuddy Web Bridge v' + BRIDGE_VERSION + ' initialized');
     
     // Set up message listeners
     setupMessageListeners();
@@ -83,7 +83,7 @@
   
   // Handle messages from extension
   function handleExtensionMessage(message, sender, sendResponse) {
-    if (message.source !== 'cinebuddy-extension') {
+    if (message.source !== 'cinewatchbuddy-extension') {
       return;
     }
     
@@ -120,7 +120,7 @@
   function sendToExtension(message) {
     try {
       chrome.runtime.sendMessage({
-        source: 'cinebuddy-web-bridge',
+        source: 'cinewatchbuddy-web-bridge',
         ...message
       }, (response) => {
         if (chrome.runtime.lastError) {

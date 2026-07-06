@@ -1,6 +1,6 @@
-# CineBuddy
+# CineWatchBuddy
 
-![CineBuddy](assets/icons/CineBuddyLogo.png)
+![CineWatchBuddy](assets/icons/CineWatchBuddyLogo.png)
 
 A browser extension that enables synchronized video playback across streaming services (YouTube,Vimeo etc.) with friends in real-time.
 
@@ -25,7 +25,7 @@ A browser extension that enables synchronized video playback across streaming se
 ## Project Structure
 
 ```
-CineBuddy/
+CineWatchBuddy/
 ├── src/
 │   ├── extension/          # Chrome Extension (Manifest V3)
 │   │   ├── background/     # Service Worker
@@ -52,7 +52,7 @@ CineBuddy/
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    CineBuddy Platform                                            │
+│                                    CineWatchBuddy Platform                                            │
 │                              (Web Client + Extension + Backend)                                 │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
                                             │
@@ -140,7 +140,7 @@ CineBuddy/
 ## Sequence Diagram
 
 ```
-───────────────────────────────  CineBuddy Watch Party Flow  ───────────────────────────────
+───────────────────────────────  CineWatchBuddy Watch Party Flow  ───────────────────────────────
 
 Actors:
 ───────
@@ -309,7 +309,7 @@ Server rebuilds room state dynamically from reconnecting clients.
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd cinebuddy
+   cd CineWatchBuddy
    ```
 
 2. **Install dependencies**
@@ -356,7 +356,7 @@ Server rebuilds room state dynamically from reconnecting clients.
 ### Chrome Extension (DRM Content)
 1. **Install the extension** in Chrome
 2. **Navigate to DRM sites** (Netflix, Disney+, Prime Video, etc.)
-3. **The extension automatically connects** to active CineBuddy rooms
+3. **The extension automatically connects** to active CineWatchBuddy rooms
 4. **Video sync and chat work seamlessly** between web client and extension
 
 ## Supported Platforms
@@ -490,13 +490,13 @@ MIT License - see LICENSE file for details
 
 2. **Load the extension**
    - Click "Load unpacked"
-   - Navigate to `F:\RESUME\Assignments\CineBuddy\dist` folder
+   - Navigate to `F:\RESUME\Assignments\CineWatchBuddy\dist` folder
    - Select the folder and click "Select Folder"
 
 3. **Verify extension loaded**
-   - You should see "CineBuddy" extension in the list
+   - You should see "CineWatchBuddy" extension in the list
    - Pin the extension to your toolbar (click the puzzle piece icon)
-   - The CineBuddy icon should appear in your toolbar
+   - The CineWatchBuddy icon should appear in your toolbar
 
 ### Step 2: Start Backend Server
 1. **Open PowerShell/Terminal**
@@ -506,14 +506,14 @@ MIT License - see LICENSE file for details
    ```
 
 2. **Verify server started**
-   - You should see: "Starting CineBuddy server on port 8080"
-   - Database should be created: "Database: ./cinebuddy.db"
+   - You should see: "Starting CineWatchBuddy server on port 8080"
+   - Database should be created: "Database: ./CineWatchBuddy.db"
    - Server should show: "Loaded X rooms from database"
 
 ### Step 3: Test Web Client
 1. **Open web client**
    - Go to `http://localhost:8080` in Chrome
-   - You should see the CineBuddy landing page
+   - You should see the CineWatchBuddy landing page
 
 2. **Create a room**
    - Enter username: "TestUser1"
@@ -531,7 +531,7 @@ MIT License - see LICENSE file for details
    - The extension should automatically detect the page
 
 2. **Check extension status**
-   - Click the CineBuddy extension icon in toolbar
+   - Click the CineWatchBuddy extension icon in toolbar
    - You should see "Extension Connected" or connection status
    - The popup should show room information
 
@@ -592,7 +592,7 @@ MIT License - see LICENSE file for details
    - Try joining a non-existent room
    - Should show appropriate error message
 
-### Expected Results ✅
+### Expected Results 
 - **Extension loads successfully** in Chrome
 - **Web client accessible** at localhost:8080
 - **Video sync works** between web client and extension

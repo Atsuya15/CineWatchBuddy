@@ -3,8 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// Simple build script for CineBuddy extension
-console.log('🎬 Building CineBuddy Extension...');
+// Simple build script for CineWatchBuddy extension
+console.log('🎬 Building CineWatchBuddy Extension...');
 
 // Validate manifest.json
 function validateManifest() {
