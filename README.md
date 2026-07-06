@@ -189,6 +189,45 @@ npm run build-web        # builds the React app into src/web/dist
 npm run start-backend    # Go serves it at http://localhost:8080
 ```
 
+The client derives its API/WebSocket URLs from `window.location.origin` (http→ws,
+https→wss), so the same build works locally and behind any reverse proxy or tunnel.
+
+### Share publicly with a Cloudflare Tunnel
+
+To let a friend join over the internet — no install, no npm, no localhost — expose
+the single-origin Go server with a Cloudflare **quick tunnel** (anonymous, no
+account needed):
+
+1. **Install `cloudflared`** (once):
+   ```bash
+   brew install cloudflared           # macOS
+   # Linux/Windows: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+   ```
+
+2. **Build the app and start the backend** (serves app + API + WS on one origin):
+   ```bash
+   npm run build-web
+   npm run start-backend              # http://localhost:8080
+   ```
+
+3. **Start the tunnel** pointing at the backend:
+   ```bash
+   cloudflared tunnel --url http://localhost:8080
+   ```
+   Cloudflare prints a public URL, e.g. `https://random-words.trycloudflare.com`.
+
+4. **Send that URL to your friend.** They open it in any browser, pick a username,
+   and create/join a room. Because the app is same-origin, the WebSocket upgrades
+   to `wss://` automatically — no config needed.
+
+> **Notes**
+> - Keep both the **backend and the tunnel** running; closing either takes the URL down.
+> - Quick-tunnel URLs are **random and temporary** (fine for testing). Each restart of
+>   `cloudflared` yields a new URL. For a stable hostname, use a
+>   [named tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with your own domain.
+> - After changing web code, rerun `npm run build-web`; the backend serves the fresh
+>   build immediately (assets are content-hashed and `index.html` is sent `no-cache`).
+
 ### Troubleshooting
 
 - **Backend won't start / `address already in use`** — port 8080 is busy. Free it and retry: `lsof -ti :8080 | xargs kill` (macOS/Linux).
