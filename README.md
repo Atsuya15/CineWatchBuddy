@@ -466,90 +466,153 @@ MIT License - see LICENSE file for details
 
 ## Manual Testing Guide
 
-### Phase 1: Web Client Testing
-1. **Start the backend**
+### Prerequisites Setup
+1. **Install Go dependencies**
    ```bash
-   cd backend && go run main.go
+   cd src/server
+   go mod tidy
    ```
 
-2. **Test room creation**
-   - Open `http://localhost:8080` in two different browser tabs
-   - Tab 1: Create a room with username "Alice"
-   - Tab 2: Join the room with username "Bob"
-   - Verify both users see each other in the participant list
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   ```
 
-3. **Test video synchronization**
-   - In Tab 1: Paste a YouTube URL and start playing
-   - In Tab 2: Verify the video starts playing automatically
-   - Test play/pause/seek - both tabs should stay synchronized
+3. **Build the extension**
+   ```bash
+   npm run build
+   ```
 
-4. **Test chat functionality**
-   - Send messages from both tabs
-   - Verify messages appear in both chat panels
-   - Test system messages (join/leave notifications)
-
-### Phase 2: WebRTC Video Calls
-1. **Test video call initiation**
-   - In Tab 1: Click "Start Call" and allow camera/microphone access
-   - In Tab 2: Verify the call starts automatically
-   - Check that both users can see each other's video
-
-2. **Test call controls**
-   - Test mute/unmute functionality
-   - Test video on/off functionality
-   - Test call end functionality
-
-3. **Test multiple participants**
-   - Open a third tab and join the room
-   - Verify the third participant can join the video call
-   - Test that all participants can see each other
-
-### Phase 3: Extension Integration
-1. **Load the Chrome extension**
+### Step 1: Load Chrome Extension
+1. **Open Chrome Extensions page**
    - Go to `chrome://extensions/`
-   - Enable Developer mode
-   - Load unpacked extension from the `extension` folder
+   - Enable "Developer mode" (toggle in top-right)
 
-2. **Test DRM site integration**
-   - Open Netflix, Disney+, or Prime Video in Chrome
-   - Create a room in the web client (`http://localhost:8080`)
-   - Verify the extension shows "Extension Connected" status
+2. **Load the extension**
+   - Click "Load unpacked"
+   - Navigate to `F:\RESUME\Assignments\CineBuddy\dist` folder
+   - Select the folder and click "Select Folder"
 
-3. **Test cross-platform sync**
-   - Play a video on Netflix (with extension)
-   - Play a different video on the web client
-   - Verify both sync with each other
+3. **Verify extension loaded**
+   - You should see "CineBuddy" extension in the list
+   - Pin the extension to your toolbar (click the puzzle piece icon)
+   - The CineBuddy icon should appear in your toolbar
 
-4. **Test chat integration**
-   - Send messages from the web client
-   - Verify they appear in the extension's chat overlay
-   - Send messages from the extension
-   - Verify they appear in the web client
+### Step 2: Start Backend Server
+1. **Open PowerShell/Terminal**
+   ```bash
+   cd src/server
+   go run main.go
+   ```
 
-### Phase 4: End-to-End Testing
-1. **Complete watch party scenario**
-   - User A: Creates room in web client, plays YouTube video
-   - User B: Joins room in web client, starts video call
-   - User C: Joins room via Chrome extension on Netflix
-   - Verify all three users are synchronized and can communicate
+2. **Verify server started**
+   - You should see: "Starting CineBuddy server on port 8080"
+   - Database should be created: "Database: ./cinebuddy.db"
+   - Server should show: "Loaded X rooms from database"
 
-2. **Test room persistence**
-   - Create a room and add participants
-   - Restart the backend server
-   - Verify the room is recreated and participants can rejoin
+### Step 3: Test Web Client
+1. **Open web client**
+   - Go to `http://localhost:8080` in Chrome
+   - You should see the CineBuddy landing page
 
-3. **Test error handling**
-   - Disconnect network and verify reconnection
-   - Test with invalid room IDs
-   - Test with missing permissions (camera/microphone)
+2. **Create a room**
+   - Enter username: "TestUser1"
+   - Click "Create Room"
+   - You should see a room page with video player and chat
 
-### Expected Results
-- ✅ Video synchronization works across all platforms
-- ✅ Chat messages appear in real-time
-- ✅ Video calls work with multiple participants
-- ✅ Extension integrates seamlessly with web client
-- ✅ Room state persists across server restarts
-- ✅ Error handling works gracefully
+3. **Test video playback**
+   - Paste a YouTube URL (e.g., `https://www.youtube.com/watch?v=dQw4w9WgXcQ`)
+   - Click "Load" button
+   - Video should start playing
+
+### Step 4: Test Extension Integration
+1. **Open a DRM site**
+   - Go to Netflix, Disney+, or Prime Video
+   - The extension should automatically detect the page
+
+2. **Check extension status**
+   - Click the CineBuddy extension icon in toolbar
+   - You should see "Extension Connected" or connection status
+   - The popup should show room information
+
+3. **Test video sync from extension**
+   - Play a video on the DRM site
+   - Check if the web client video syncs (if in same room)
+   - The extension should show sync indicators
+
+### Step 5: Test Cross-Platform Sync
+1. **Open second browser tab**
+   - Go to `http://localhost:8080` in a new tab
+   - Join the same room with username "TestUser2"
+
+2. **Test bidirectional sync**
+   - Play video in web client → should sync to extension
+   - Play video in extension → should sync to web client
+   - Test play/pause/seek in both directions
+
+### Step 6: Test Chat Functionality
+1. **Web client chat**
+   - Send messages from web client chat panel
+   - Messages should appear in real-time
+
+2. **Extension chat**
+   - Click the chat button in extension popup
+   - Send messages from extension
+   - Messages should appear in web client
+
+### Step 7: Test WebRTC Video Calls
+1. **Start video call**
+   - In web client, click "Start Video Call"
+   - Allow camera/microphone permissions
+   - Video call interface should appear
+
+2. **Test call features**
+   - Mute/unmute microphone
+   - Turn video on/off
+   - End call functionality
+
+### Step 8: Test Room Persistence
+1. **Restart backend server**
+   - Stop the Go server (Ctrl+C)
+   - Start it again: `go run main.go`
+   - Server should restore previous rooms
+
+2. **Rejoin room**
+   - Refresh the web client page
+   - Rejoin the same room
+   - Chat history should be restored
+
+### Step 9: Test Error Handling
+1. **Network disconnection**
+   - Disconnect internet briefly
+   - Extension should show "Reconnecting..." status
+   - Reconnect and verify sync resumes
+
+2. **Invalid room ID**
+   - Try joining a non-existent room
+   - Should show appropriate error message
+
+### Expected Results ✅
+- **Extension loads successfully** in Chrome
+- **Web client accessible** at localhost:8080
+- **Video sync works** between web client and extension
+- **Chat messages** appear in real-time across platforms
+- **WebRTC calls** work with camera/microphone
+- **Room persistence** survives server restarts
+- **Error handling** works gracefully
+
+### Troubleshooting
+- **Extension not loading**: Check if `dist` folder exists and has manifest.json
+- **Server won't start**: Ensure port 8080 is not in use
+- **Video not syncing**: Check browser console for WebSocket errors
+- **Chat not working**: Verify WebSocket connection is active
+- **WebRTC not working**: Check camera/microphone permissions
+
+### Debug Tips
+- Open Chrome DevTools (F12) to see console logs
+- Check extension popup for connection status
+- Monitor network tab for WebSocket connections
+- Use `chrome://extensions/` to reload extension after changes
 
 ## Support
 

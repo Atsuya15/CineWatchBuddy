@@ -48,7 +48,7 @@
         "https://127.0.0.1:8080/*"
       ],
       "js": [
-        "content/web-bridge.js"
+        "content/web-bridge-enhanced.js"
       ],
       "run_at": "document_start"
     }
