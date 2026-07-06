@@ -22,7 +22,7 @@ class WebSocketManager {
 
     return new Promise((resolve, reject) => {
       try {
-        const wsUrl = `ws://localhost:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
+        const wsUrl = `ws://172.20.156.8:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
         console.log('Attempting to connect to WebSocket:', wsUrl)
         this.ws = new WebSocket(wsUrl)
 

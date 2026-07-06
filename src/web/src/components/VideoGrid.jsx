@@ -30,6 +30,16 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
     }
   }, [roomId, username])
 
+  // Update video elements when remote streams change
+  useEffect(() => {
+    remoteStreams.forEach((stream, participantId) => {
+      const videoRef = remoteVideoRefs.current.get(participantId)
+      if (videoRef && videoRef.srcObject !== stream) {
+        videoRef.srcObject = stream
+      }
+    })
+  }, [remoteStreams])
+
   const handleWebSocketMessage = (data) => {
     switch (data.type) {
       case 'webrtc-offer':
@@ -91,6 +101,13 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
         localVideoRef.current.srcObject = stream
         console.log('Set local video source')
       }
+
+      // Create peer connections for existing participants
+      participants.forEach(participant => {
+        if (participant.username !== username) {
+          createPeerConnection(participant.username, stream)
+        }
+      })
 
       // Notify other participants
       const success = websocketManager.send('webrtc-call-started', {
@@ -177,7 +194,7 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
     }
   }
 
-  const createPeerConnection = (participantId) => {
+  const createPeerConnection = (participantId, stream = null) => {
     // TURN configuration can be provided via localStorage 'cinebuddy_turn'
     let turnServers = []
     try {
@@ -194,10 +211,11 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
 
     const pc = new RTCPeerConnection(configuration)
 
-    // Add local stream
-    if (localStream) {
-      localStream.getTracks().forEach(track => {
-        pc.addTrack(track, localStream)
+    // Add local stream (use provided stream or current localStream)
+    const streamToUse = stream || localStream
+    if (streamToUse) {
+      streamToUse.getTracks().forEach(track => {
+        pc.addTrack(track, streamToUse)
       })
     }
 
@@ -402,18 +420,31 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
             )}
 
             {/* Remote Videos - show all participants who are sharing */}
-            {Array.from(remoteStreams.entries()).map(([participantId, stream]) => (
-              <div key={participantId} className="relative">
-                <video
-                  ref={el => remoteVideoRefs.current.set(participantId, el)}
-                  autoPlay
-                  className="w-full h-32 bg-black rounded-lg"
-                />
-                <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 text-white px-2 py-1 rounded">
-                  {participantId}
+            {Array.from(remoteStreams.entries()).map(([participantId, stream]) => {
+              // Set the video source when the ref is available
+              const videoRef = remoteVideoRefs.current.get(participantId)
+              if (videoRef && videoRef.srcObject !== stream) {
+                videoRef.srcObject = stream
+              }
+              
+              return (
+                <div key={participantId} className="relative">
+                  <video
+                    ref={el => {
+                      if (el) {
+                        remoteVideoRefs.current.set(participantId, el)
+                        el.srcObject = stream
+                      }
+                    }}
+                    autoPlay
+                    className="w-full h-32 bg-black rounded-lg"
+                  />
+                  <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 text-white px-2 py-1 rounded">
+                    {participantId}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
 
             {/* Show participants who are sharing but we don't have their stream yet */}
             {participants

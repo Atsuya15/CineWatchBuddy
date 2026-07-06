@@ -17,9 +17,9 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/ws': 'http://localhost:8080',
+      '/ws': 'http://172.20.156.8:8080',
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://172.20.156.8:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       }

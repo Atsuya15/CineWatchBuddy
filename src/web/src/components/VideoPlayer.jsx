@@ -10,6 +10,7 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   const [isHost, setIsHost] = useState(false)
   const [ws, setWs] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [isSyncingVideo, setIsSyncingVideo] = useState(false)
   
   const videoRef = useRef(null)
   const playerRef = useRef(null)
@@ -40,19 +41,52 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
     }
   }, [roomId, username])
 
+  // Auto-load video when URL changes (for synced videos)
+  useEffect(() => {
+    if (videoUrl && !isUserAction.current) {
+      console.log('🎥 Video URL changed, auto-loading:', videoUrl)
+      if (isYouTube) {
+        loadYouTube(videoUrl)
+      } else if (videoRef.current) {
+        videoRef.current.src = videoUrl
+        videoRef.current.load()
+      }
+    }
+  }, [videoUrl, isYouTube])
+
   const handleWebSocketMessage = (data) => {
     switch (data.type) {
       case 'video-sync':
         if (data.data && !isUserAction.current) {
-          const { currentTime: syncTime, paused, volume: syncVolume, url } = data.data
+          const { currentTime: syncTime, paused, volume: syncVolume, url: videoUrlFromSync } = data.data
+          const url = videoUrlFromSync || data.data.videoUrl
           console.log('🎥 Received video sync:', { url, currentTime: syncTime, paused })
           
           // Handle URL change first
           if (url && url !== videoUrl) {
-            console.log('🎥 Syncing video URL:', url)
+            console.log('🎥 Syncing video URL from another participant:', url)
+            setIsSyncingVideo(true)
             setVideoUrl(url)
             setIsYouTube(isYouTubeUrl(url))
+            
+            // Automatically load the video for other participants
+            if (isYouTubeUrl(url)) {
+              console.log('🎥 Auto-loading YouTube video for other participants')
+              loadYouTube(url)
+            } else if (videoRef.current) {
+              console.log('🎥 Auto-loading regular video for other participants')
+              videoRef.current.src = url
+              videoRef.current.load()
+            }
+            
+            // Hide syncing indicator after video loads
+            setTimeout(() => {
+              setIsSyncingVideo(false)
+            }, 2000)
           }
+          
+          // Update UI state for all video types
+          setIsPlaying(!paused)
           
           if (isYouTube && ytPlayerRef.current) {
             if (url && playerRef.current !== url) {
@@ -66,10 +100,11 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
             }
             if (paused && (state === 1 || state === 3)) {
               ytPlayerRef.current.pauseVideo()
-              setIsPlaying(false)
             } else if (!paused && state !== 1) {
               ytPlayerRef.current.playVideo()
-              setIsPlaying(true)
+            }
+            if (syncVolume !== undefined && ytPlayerRef.current.getVolume() !== syncVolume * 100) {
+              ytPlayerRef.current.setVolume(syncVolume * 100)
             }
           } else if (videoRef.current) {
             // Sync video URL if different
@@ -88,10 +123,8 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
             if (videoRef.current.paused !== paused) {
               if (paused) {
                 videoRef.current.pause()
-                setIsPlaying(false)
               } else {
                 videoRef.current.play().catch(console.error)
-                setIsPlaying(true)
               }
             }
             
@@ -107,35 +140,41 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
         // Handle room joined with current state
         if (data.data) {
           const { room, currentVideo, chatHistory } = data.data
-          setRoom(room)
+          // Room state is handled by parent component
           
           // Apply current video state if available
           if (currentVideo) {
-            if (currentVideo.url) {
-              setVideoUrl(currentVideo.url)
-              if (isYouTubeUrl(currentVideo.url)) {
-                loadYouTube(currentVideo.url)
+            const videoUrl = currentVideo.url || currentVideo.VideoURL || currentVideo.videoUrl
+            if (videoUrl) {
+              setVideoUrl(videoUrl)
+              if (isYouTubeUrl(videoUrl)) {
+                loadYouTube(videoUrl)
               } else if (videoRef.current) {
-                videoRef.current.src = currentVideo.url
+                videoRef.current.src = videoUrl
                 videoRef.current.load()
               }
             }
             
-            if (currentVideo.currentTime) {
+            if (currentVideo.currentTime && videoRef.current) {
               videoRef.current.currentTime = currentVideo.currentTime
             }
             
-            if (currentVideo.isPlaying !== undefined) {
-              if (currentVideo.isPlaying) {
-                videoRef.current.play().catch(console.error)
-                setIsPlaying(true)
-              } else {
-                videoRef.current.pause()
+            const isPaused = currentVideo.paused !== undefined ? currentVideo.paused : !currentVideo.isPlaying
+            if (isPaused !== undefined) {
+              if (isPaused) {
+                if (videoRef.current) {
+                  videoRef.current.pause()
+                }
                 setIsPlaying(false)
+              } else {
+                if (videoRef.current) {
+                  videoRef.current.play().catch(console.error)
+                }
+                setIsPlaying(true)
               }
             }
             
-            if (currentVideo.volume !== undefined) {
+            if (currentVideo.volume !== undefined && videoRef.current) {
               videoRef.current.volume = currentVideo.volume
               setVolume(currentVideo.volume)
             }
@@ -152,7 +191,7 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   const sendVideoSync = (data) => {
     const message = {
       ...data,
-      url: videoUrl,
+      url: data.url || videoUrl, // Use the URL from data if provided, otherwise use current videoUrl
       roomId,
       username,
       timestamp: Date.now()
@@ -163,17 +202,23 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   }
 
   const handlePlay = () => {
-    isUserAction.current = true
-    setIsPlaying(true)
-    sendVideoSync({ currentTime: videoRef.current.currentTime, paused: false, volume: videoRef.current.volume })
-    setTimeout(() => { isUserAction.current = false }, 100)
+    if (videoRef.current) {
+      isUserAction.current = true
+      videoRef.current.play().catch(console.error)
+      setIsPlaying(true)
+      sendVideoSync({ currentTime: videoRef.current.currentTime, paused: false, volume: videoRef.current.volume })
+      setTimeout(() => { isUserAction.current = false }, 100)
+    }
   }
 
   const handlePause = () => {
-    isUserAction.current = true
-    setIsPlaying(false)
-    sendVideoSync({ currentTime: videoRef.current.currentTime, paused: true, volume: videoRef.current.volume })
-    setTimeout(() => { isUserAction.current = false }, 100)
+    if (videoRef.current) {
+      isUserAction.current = true
+      videoRef.current.pause()
+      setIsPlaying(false)
+      sendVideoSync({ currentTime: videoRef.current.currentTime, paused: true, volume: videoRef.current.volume })
+      setTimeout(() => { isUserAction.current = false }, 100)
+    }
   }
 
   const handleSeeked = () => {
@@ -191,19 +236,19 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
     setDuration(videoRef.current.duration)
   }
 
-  const handleVolumeChange = () => {
-    setVolume(videoRef.current.volume)
-    sendVideoSync({ currentTime: videoRef.current.currentTime, paused: videoRef.current.paused, volume: videoRef.current.volume })
-  }
 
   const handleUrlSubmit = (e) => {
     e.preventDefault()
     if (videoUrl.trim()) {
       const url = videoUrl.trim()
+      
+      // Set user action flag to prevent auto-loading conflicts
+      isUserAction.current = true
+      
       setVideoUrl(url)
       setIsYouTube(isYouTubeUrl(url))
       
-      console.log('🎥 Loading video URL:', url, 'isYouTube:', isYouTubeUrl(url))
+      console.log('🎥 User loading video URL:', url, 'isYouTube:', isYouTubeUrl(url))
       
       // Sync video URL change to other participants
       const syncData = { 
@@ -215,9 +260,18 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
       console.log('🎥 Sending video sync:', syncData)
       sendVideoSync(syncData)
       
+      // Load the video for the current user
       if (isYouTubeUrl(url)) {
         loadYouTube(url)
+      } else if (videoRef.current) {
+        videoRef.current.src = url
+        videoRef.current.load()
       }
+      
+      // Reset user action flag after a short delay
+      setTimeout(() => {
+        isUserAction.current = false
+      }, 1000)
     }
   }
 
@@ -251,8 +305,28 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           onStateChange: (e) => {
             if (e.data === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true)
+              // Send sync message for YouTube play
+              if (!isUserAction.current) {
+                isUserAction.current = true
+                sendVideoSync({ 
+                  currentTime: ytPlayerRef.current.getCurrentTime(), 
+                  paused: false, 
+                  volume: ytPlayerRef.current.getVolume() / 100 
+                })
+                setTimeout(() => { isUserAction.current = false }, 100)
+              }
             } else if (e.data === window.YT.PlayerState.PAUSED) {
               setIsPlaying(false)
+              // Send sync message for YouTube pause
+              if (!isUserAction.current) {
+                isUserAction.current = true
+                sendVideoSync({ 
+                  currentTime: ytPlayerRef.current.getCurrentTime(), 
+                  paused: true, 
+                  volume: ytPlayerRef.current.getVolume() / 100 
+                })
+                setTimeout(() => { isUserAction.current = false }, 100)
+              }
             }
           }
         }
@@ -271,7 +345,16 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   return (
     <div className="h-full flex flex-col">
       {/* Video area */}
-      <div className="flex-1 bg-black flex items-center justify-center">
+      <div className="flex-1 bg-black flex items-center justify-center relative">
+        {isSyncingVideo && (
+          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-10">
+            <div className="text-center text-white">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+              <p className="text-lg font-semibold">Syncing video from another participant...</p>
+            </div>
+          </div>
+        )}
+        
         {videoUrl && isYouTube ? (
           <div id="yt-player" className="w-full h-full max-w-full max-h-full"></div>
         ) : videoUrl ? (
@@ -284,7 +367,6 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
             onSeeked={handleSeeked}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
-            onVolumeChange={handleVolumeChange}
             controls
           />
         ) : (
@@ -316,51 +398,6 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
         </form>
       </div>
 
-      {/* Video controls */}
-      {videoUrl && (
-        <div className="p-4 bg-gray-800 border-t border-gray-700">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => videoRef.current?.play()}
-              className="btn btn-secondary"
-            >
-              ▶️ Play
-            </button>
-            <button
-              onClick={() => videoRef.current?.pause()}
-              className="btn btn-secondary"
-            >
-              ⏸️ Pause
-            </button>
-            <div className="flex-1 flex items-center gap-2">
-              <span className="text-sm text-gray-400">{formatTime(currentTime)}</span>
-              <div className="flex-1 bg-gray-600 rounded-full h-1">
-                <div
-                  className="bg-red-500 h-1 rounded-full"
-                  style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-                ></div>
-              </div>
-              <span className="text-sm text-gray-400">{formatTime(duration)}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-400">Volume:</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={volume}
-                onChange={(e) => {
-                  if (videoRef.current) {
-                    videoRef.current.volume = parseFloat(e.target.value)
-                  }
-                }}
-                className="w-20"
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

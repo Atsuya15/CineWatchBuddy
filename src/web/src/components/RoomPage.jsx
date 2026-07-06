@@ -4,7 +4,7 @@ import VideoPlayer from './VideoPlayer'
 import ChatPanel from './ChatPanel'
 import ParticipantList from './ParticipantList'
 import ExtensionIntegration from './ExtensionIntegration'
-import VideoGrid from './VideoGrid'
+import VideoGridNew from './VideoGridNew'
 import { websocketManager } from '../utils/websocketManager'
 
 const RoomPage = () => {
@@ -154,6 +154,22 @@ const RoomPage = () => {
                   Test Connection
                 </button>
                 <button
+                  onClick={() => {
+                    console.log('🧪 Testing video sync...')
+                    const success = websocketManager.send('video-sync', {
+                      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                      currentTime: 0,
+                      paused: true,
+                      roomId: id,
+                      username: username
+                    })
+                    console.log('🧪 Video sync test sent, success:', success)
+                  }}
+                  className="btn btn-secondary"
+                >
+                  Test Video Sync
+                </button>
+                <button
                   onClick={() => window.location.href = '/'}
                   className="btn btn-secondary"
                 >
@@ -203,7 +219,7 @@ const RoomPage = () => {
 
           {/* Video Call */}
           <div className="p-4 border-b border-gray-700">
-            <VideoGrid
+            <VideoGridNew
               roomId={id}
               username={username}
               onCallStarted={() => console.log('Call started')}

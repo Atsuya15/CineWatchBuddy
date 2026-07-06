@@ -419,7 +419,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
 
     clientID := generateClientID()
     // Track client room from query
@@ -451,6 +450,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cleanup
+	conn.Close()
     s.mutex.Lock()
     delete(s.clients, clientID)
     roomID = s.clientRooms[clientID]
@@ -610,11 +610,18 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 func (s *Server) handleVideoSync(clientID string, data interface{}) {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
+		log.Printf("Invalid video sync data from client %s", clientID)
 		return
 	}
 
 	roomID, _ := dataMap["roomId"].(string)
+	username, _ := dataMap["username"].(string)
+	url, _ := dataMap["url"].(string)
+	
+	log.Printf("Received video sync from %s in room %s: url=%s", username, roomID, url)
+	
 	if roomID == "" {
+		log.Printf("No room ID in video sync from client %s", clientID)
 		return
 	}
 
@@ -623,6 +630,7 @@ func (s *Server) handleVideoSync(clientID string, data interface{}) {
 	s.mutex.RUnlock()
 
 	if !exists {
+		log.Printf("Room %s not found for video sync", roomID)
 		return
 	}
 
@@ -631,10 +639,12 @@ func (s *Server) handleVideoSync(clientID string, data interface{}) {
 		CurrentTime:  getFloat64(dataMap, "currentTime"),
 		Paused:       getBool(dataMap, "paused"),
 		PlaybackRate: getFloat64(dataMap, "playbackRate"),
-		VideoURL:     getString(dataMap, "videoUrl"),
+		VideoURL:     getString(dataMap, "url"), // Use "url" instead of "videoUrl"
 		Duration:     getFloat64(dataMap, "duration"),
 		LastUpdated:  time.Now(),
 	}
+
+	log.Printf("Updated video state for room %s: URL=%s, Time=%.2f, Paused=%v", roomID, videoState.VideoURL, videoState.CurrentTime, videoState.Paused)
 
 	s.mutex.Lock()
 	room.VideoState = videoState
@@ -645,9 +655,16 @@ func (s *Server) handleVideoSync(clientID string, data interface{}) {
 	s.db.UpdateVideoState(roomID, videoState)
 
 	// Broadcast to room
+	log.Printf("Broadcasting video sync to room %s", roomID)
 	s.broadcastToRoom(roomID, WebSocketMessage{
 		Type: "video-sync",
-		Data: videoState,
+		Data: map[string]interface{}{
+			"url":          videoState.VideoURL,
+			"currentTime":  videoState.CurrentTime,
+			"paused":       videoState.Paused,
+			"playbackRate": videoState.PlaybackRate,
+			"duration":     videoState.Duration,
+		},
 	})
 }
 
@@ -1029,8 +1046,12 @@ func main() {
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{
 			"http://localhost:3000",
+			"http://localhost:3001",
+			"http://localhost:3002",
 			"http://localhost:8080",
 			"http://127.0.0.1:3000",
+			"http://127.0.0.1:3001",
+			"http://127.0.0.1:3002",
 			"http://127.0.0.1:8080",
 		},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
