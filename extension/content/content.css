@@ -1,0 +1,161 @@
+/* CineBuddy Content Script Styles */
+
+#cinebuddy-overlay {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+#cinebuddy-overlay:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4) !important;
+}
+
+#cinebuddy-close {
+    transition: all 0.2s ease !important;
+    border-radius: 50% !important;
+    width: 24px !important;
+    height: 24px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+#cinebuddy-close:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    transform: scale(1.1) !important;
+}
+
+#cinebuddy-content {
+    max-height: 300px !important;
+    overflow-y: auto !important;
+}
+
+#cinebuddy-content::-webkit-scrollbar {
+    width: 4px !important;
+}
+
+#cinebuddy-content::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-radius: 2px !important;
+}
+
+#cinebuddy-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3) !important;
+    border-radius: 2px !important;
+}
+
+#cinebuddy-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5) !important;
+}
+
+#cinebuddy-status {
+    padding: 8px 12px !important;
+    background: rgba(16, 185, 129, 0.2) !important;
+    border-radius: 6px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    margin-bottom: 12px !important;
+    border-left: 3px solid #10b981 !important;
+}
+
+#cinebuddy-participants ul {
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+#cinebuddy-participants li {
+    padding: 4px 0 !important;
+    font-size: 13px !important;
+    color: #e0e0e0 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+#cinebuddy-participants li:last-child {
+    border-bottom: none !important;
+}
+
+#cinebuddy-chat {
+    margin-top: 12px !important;
+    padding-top: 12px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #cinebuddy-overlay {
+        width: 280px !important;
+        right: 10px !important;
+        top: 10px !important;
+    }
+}
+
+/* Animation for overlay appearance */
+@keyframes cinebuddy-slide-in {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+#cinebuddy-overlay {
+    animation: cinebuddy-slide-in 0.3s ease-out !important;
+}
+
+/* Video detection indicator */
+.cinebuddy-video-indicator {
+    position: absolute !important;
+    top: 10px !important;
+    left: 10px !important;
+    background: rgba(16, 185, 129, 0.9) !important;
+    color: white !important;
+    padding: 4px 8px !important;
+    border-radius: 4px !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    z-index: 9999 !important;
+    pointer-events: none !important;
+    animation: cinebuddy-pulse 2s infinite !important;
+}
+
+@keyframes cinebuddy-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* Sync status indicator */
+.cinebuddy-sync-status {
+    position: absolute !important;
+    bottom: 10px !important;
+    right: 10px !important;
+    background: rgba(0, 0, 0, 0.8) !important;
+    color: white !important;
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    z-index: 9999 !important;
+    pointer-events: none !important;
+    transition: all 0.3s ease !important;
+}
+
+.cinebuddy-sync-status.syncing {
+    background: rgba(59, 130, 246, 0.9) !important;
+}
+
+.cinebuddy-sync-status.synced {
+    background: rgba(16, 185, 129, 0.9) !important;
+}
+
+.cinebuddy-sync-status.error {
+    background: rgba(239, 68, 68, 0.9) !important;
+}

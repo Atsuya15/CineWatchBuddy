@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "CineBuddy",
+  "version": "1.0.0",
+  "description": "Synchronize video playback across streaming services with friends",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.netflix.com/*",
+    "https://*.hulu.com/*",
+    "https://*.youtube.com/*",
+    "https://*.disneyplus.com/*",
+    "https://*.amazon.com/*",
+    "https://*.hbomax.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://localhost/*",
+    "https://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.netflix.com/*",
+        "https://*.hulu.com/*",
+        "https://*.disneyplus.com/*",
+        "https://*.amazon.com/*",
+        "https://*.hbomax.com/*",
+        "https://*.paramountplus.com/*",
+        "https://*.peacocktv.com/*"
+      ],
+      "js": [
+        "config/config.js",
+        "content/content.js"
+      ],
+      "css": ["content/content.css"]
+    },
+    {
+      "matches": [
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*",
+        "https://localhost:8080/*",
+        "https://127.0.0.1:8080/*"
+      ],
+      "js": [
+        "content/web-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "CineBuddy"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["components/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8080/*",
+      "https://localhost:8080/*",
+      "http://127.0.0.1:8080/*",
+      "https://127.0.0.1:8080/*"
+    ]
+  }
+}
