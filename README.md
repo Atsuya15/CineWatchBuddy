@@ -228,6 +228,29 @@ account needed):
 > - After changing web code, rerun `npm run build-web`; the backend serves the fresh
 >   build immediately (assets are content-hashed and `index.html` is sent `no-cache`).
 
+### Share the extension with a friend (DRM sites)
+
+DRM sites (Netflix, Disney+, …) need the extension on **both** ends. To hand it to a
+friend without npm:
+
+1. **Build it:** `npm run build` → an unpacked extension in `dist/`.
+2. **Zip `dist/`** and send it (or publish to the Chrome Web Store for a one‑click install).
+3. Your friend: open `chrome://extensions/` → enable **Developer mode** → **Load unpacked** → select the folder.
+
+**Point it at your shared backend.** The extension defaults to `ws://localhost:8080`, so out of
+the box each person only reaches their own machine. For internet DRM sync against the server you
+exposed via the tunnel, set your tunnel URL **before building** and allow its host:
+
+- `backendUrl` / `httpUrl` in `src/extension/background/background.js`, `src/extension/popup/popup.js`, and `src/extension/config/config.js` → `wss://<your>.trycloudflare.com/ws` and `https://<your>.trycloudflare.com`
+- add that host to `host_permissions` (and `externally_connectable`) in `src/extension/manifest.json`
+
+Then `npm run build` again and share the new `dist/`.
+
+> ⚠️ There is no in‑extension setting for the server URL yet, so this is a **build‑time** change,
+> and quick‑tunnel URLs change on every restart — use a **named tunnel** with your own domain for
+> something stable. The **web client needs none of this**: YouTube / Vimeo / direct URLs already
+> work over the tunnel with no configuration.
+
 ### Troubleshooting
 
 - **Backend won't start / `address already in use`** — port 8080 is busy. Free it and retry: `lsof -ti :8080 | xargs kill` (macOS/Linux).
