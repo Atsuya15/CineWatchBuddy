@@ -15,6 +15,9 @@ A browser extension that enables synchronized video playback across streaming se
 
 ## Architecture
 
+> 📐 **See [ARCHITECTURE.md](ARCHITECTURE.md)** for rendered diagrams — a component
+> graph, the watch‑party message flow, and the deployment shape.
+
 - **Web Client**: React-based SPA served by Go backend
 - **Chrome Extension**: Manifest V3 extension for DRM content (Netflix, Disney+, etc.)
 - **Backend**: Go WebSocket server with persistent room state and chat history
