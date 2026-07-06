@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { websocketManager } from '../utils/websocketManager'
 
 const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   const [videoUrl, setVideoUrl] = useState('')
@@ -12,52 +13,30 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   
   const videoRef = useRef(null)
   const playerRef = useRef(null)
+  const ytPlayerRef = useRef(null)
+  const [isYouTube, setIsYouTube] = useState(false)
   const isUserAction = useRef(false)
 
   useEffect(() => {
-    // Initialize WebSocket connection
-    const connectWebSocket = () => {
-      const wsUrl = `ws://localhost:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
-      const websocket = new WebSocket(wsUrl)
+    // Connect to shared WebSocket
+    websocketManager.connect(roomId, username).then(() => {
+      setIsConnected(true)
+      onConnectionChange(true)
+    }).catch(error => {
+      console.error('Failed to connect WebSocket:', error)
+      setIsConnected(false)
+      onConnectionChange(false)
+    })
 
-      websocket.onopen = () => {
-        console.log('WebSocket connected')
-        setIsConnected(true)
-        onConnectionChange(true)
-      }
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          handleWebSocketMessage(data)
-        } catch (err) {
-          console.error('Error parsing WebSocket message:', err)
-        }
-      }
-
-      websocket.onclose = () => {
-        console.log('WebSocket disconnected')
-        setIsConnected(false)
-        onConnectionChange(false)
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000)
-      }
-
-      websocket.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        setIsConnected(false)
-        onConnectionChange(false)
-      }
-
-      setWs(websocket)
+    // Listen to shared WebSocket messages
+    const handleMessage = (event) => {
+      handleWebSocketMessage(event.detail)
     }
 
-    connectWebSocket()
+    window.addEventListener('cinewatchbuddy-message', handleMessage)
 
     return () => {
-      if (ws) {
-        ws.close()
-      }
+      window.removeEventListener('cinewatchbuddy-message', handleMessage)
     }
   }, [roomId, username])
 
@@ -66,9 +45,36 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
       case 'video-sync':
         if (data.data && !isUserAction.current) {
           const { currentTime: syncTime, paused, volume: syncVolume, url } = data.data
-          if (videoRef.current) {
+          console.log('🎥 Received video sync:', { url, currentTime: syncTime, paused })
+          
+          // Handle URL change first
+          if (url && url !== videoUrl) {
+            console.log('🎥 Syncing video URL:', url)
+            setVideoUrl(url)
+            setIsYouTube(isYouTubeUrl(url))
+          }
+          
+          if (isYouTube && ytPlayerRef.current) {
+            if (url && playerRef.current !== url) {
+              loadYouTube(url)
+            }
+            const targetTime = syncTime || 0
+            const state = ytPlayerRef.current.getPlayerState()
+            const current = ytPlayerRef.current.getCurrentTime()
+            if (Math.abs(current - targetTime) > 0.5) {
+              ytPlayerRef.current.seekTo(targetTime, true)
+            }
+            if (paused && (state === 1 || state === 3)) {
+              ytPlayerRef.current.pauseVideo()
+              setIsPlaying(false)
+            } else if (!paused && state !== 1) {
+              ytPlayerRef.current.playVideo()
+              setIsPlaying(true)
+            }
+          } else if (videoRef.current) {
             // Sync video URL if different
             if (url && videoRef.current.src !== url) {
+              console.log('🎥 Setting video source to:', url)
               videoRef.current.src = url
               videoRef.current.load()
             }
@@ -104,11 +110,15 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
           setRoom(room)
           
           // Apply current video state if available
-          if (currentVideo && videoRef.current) {
-            if (currentVideo.url && videoRef.current.src !== currentVideo.url) {
+          if (currentVideo) {
+            if (currentVideo.url) {
               setVideoUrl(currentVideo.url)
-              videoRef.current.src = currentVideo.url
-              videoRef.current.load()
+              if (isYouTubeUrl(currentVideo.url)) {
+                loadYouTube(currentVideo.url)
+              } else if (videoRef.current) {
+                videoRef.current.src = currentVideo.url
+                videoRef.current.load()
+              }
             }
             
             if (currentVideo.currentTime) {
@@ -140,18 +150,16 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   }
 
   const sendVideoSync = (data) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'video-sync',
-        data: {
-          ...data,
-          url: videoUrl,
-          roomId,
-          username,
-          timestamp: Date.now()
-        }
-      }))
+    const message = {
+      ...data,
+      url: videoUrl,
+      roomId,
+      username,
+      timestamp: Date.now()
     }
+    console.log('🎥 Sending video-sync message:', message)
+    const success = websocketManager.send('video-sync', message)
+    console.log('🎥 Video sync sent, success:', success)
   }
 
   const handlePlay = () => {
@@ -191,8 +199,66 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
   const handleUrlSubmit = (e) => {
     e.preventDefault()
     if (videoUrl.trim()) {
-      // For now, just set the URL - in a real implementation, you'd validate and process the URL
-      setVideoUrl(videoUrl.trim())
+      const url = videoUrl.trim()
+      setVideoUrl(url)
+      setIsYouTube(isYouTubeUrl(url))
+      
+      console.log('🎥 Loading video URL:', url, 'isYouTube:', isYouTubeUrl(url))
+      
+      // Sync video URL change to other participants
+      const syncData = { 
+        url: url, 
+        currentTime: 0, 
+        paused: true, 
+        volume: videoRef.current?.volume || 1 
+      }
+      console.log('🎥 Sending video sync:', syncData)
+      sendVideoSync(syncData)
+      
+      if (isYouTubeUrl(url)) {
+        loadYouTube(url)
+      }
+    }
+  }
+
+  const isYouTubeUrl = (url) => /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url)
+
+  const extractYouTubeId = (url) => {
+    try {
+      const u = new URL(url)
+      if (u.hostname.includes('youtu.be')) return u.pathname.slice(1)
+      return u.searchParams.get('v')
+    } catch { return null }
+  }
+
+  const ensureYouTubeAPI = () => new Promise((resolve) => {
+    if (window.YT && window.YT.Player) return resolve()
+    const tag = document.createElement('script')
+    tag.src = 'https://www.youtube.com/iframe_api'
+    document.body.appendChild(tag)
+    window.onYouTubeIframeAPIReady = () => resolve()
+  })
+
+  const loadYouTube = async (url) => {
+    const id = extractYouTubeId(url)
+    if (!id) return
+    setIsYouTube(true)
+    await ensureYouTubeAPI()
+    if (!ytPlayerRef.current) {
+      ytPlayerRef.current = new window.YT.Player('yt-player', {
+        videoId: id,
+        events: {
+          onStateChange: (e) => {
+            if (e.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true)
+            } else if (e.data === window.YT.PlayerState.PAUSED) {
+              setIsPlaying(false)
+            }
+          }
+        }
+      })
+    } else {
+      ytPlayerRef.current.loadVideoById(id)
     }
   }
 
@@ -206,7 +272,9 @@ const VideoPlayer = ({ roomId, username, onConnectionChange }) => {
     <div className="h-full flex flex-col">
       {/* Video area */}
       <div className="flex-1 bg-black flex items-center justify-center">
-        {videoUrl ? (
+        {videoUrl && isYouTube ? (
+          <div id="yt-player" className="w-full h-full max-w-full max-h-full"></div>
+        ) : videoUrl ? (
           <video
             ref={videoRef}
             src={videoUrl}

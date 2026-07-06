@@ -5,6 +5,7 @@ import ChatPanel from './ChatPanel'
 import ParticipantList from './ParticipantList'
 import ExtensionIntegration from './ExtensionIntegration'
 import VideoGrid from './VideoGrid'
+import { websocketManager } from '../utils/websocketManager'
 
 const RoomPage = () => {
   const { id } = useParams()
@@ -28,6 +29,48 @@ const RoomPage = () => {
       fetchRoomData()
     }
   }, [id])
+
+  useEffect(() => {
+    // Initialize shared WebSocket connection when username and room are available
+    const initWebSocket = async () => {
+      if (username && id) {
+        try {
+          console.log('Connecting WebSocket for room:', id, 'user:', username)
+          await websocketManager.connect(id, username)
+          setIsConnected(true)
+          console.log('WebSocket connected successfully')
+          
+          // Send join-room message to backend
+          const joinSuccess = websocketManager.send('join-room', {
+            roomId: id,
+            username: username
+          })
+          console.log('📤 Sent join-room message, success:', joinSuccess)
+        } catch (error) {
+          console.error('Failed to connect WebSocket:', error)
+          setIsConnected(false)
+        }
+      }
+    }
+
+    initWebSocket()
+
+    // Listen for send events from components
+    const handleSend = (event) => {
+      if (websocketManager.ws && websocketManager.ws.readyState === WebSocket.OPEN) {
+        websocketManager.send(event.detail.type, event.detail.data)
+      } else {
+        console.warn('WebSocket not connected, cannot send message:', event.detail)
+      }
+    }
+
+    window.addEventListener('cinewatchbuddy-send', handleSend)
+
+    return () => {
+      window.removeEventListener('cinewatchbuddy-send', handleSend)
+      websocketManager.disconnect()
+    }
+  }, [id, username])
 
   const fetchRoomData = async () => {
     try {
@@ -100,6 +143,16 @@ const RoomPage = () => {
                   <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
                   {isConnected ? 'Connected' : 'Disconnected'}
                 </div>
+                <button
+                  onClick={() => {
+                    console.log('🧪 Testing WebSocket connection...')
+                    const success = websocketManager.send('ping', { test: 'hello' })
+                    console.log('🧪 Test message sent, success:', success)
+                  }}
+                  className="btn btn-secondary"
+                >
+                  Test Connection
+                </button>
                 <button
                   onClick={() => window.location.href = '/'}
                   className="btn btn-secondary"

@@ -27,6 +27,7 @@ type Server struct {
 	mutex      sync.RWMutex
 	db         *database.Database
 	config     *Config
+    clientRooms map[string]string
 }
 
 type Config struct {
@@ -48,6 +49,7 @@ type Room struct {
 	HostID       string                 `json:"hostId"`
 	VideoState   *database.VideoState   `json:"videoState,omitempty"`
 	ChatHistory  []*database.ChatMessage `json:"chatHistory,omitempty"`
+	Clients      []string               `json:"-"` // Track connected client IDs
 }
 
 type WebSocketMessage struct {
@@ -100,6 +102,7 @@ func NewServer(config *Config) (*Server, error) {
 		rateLimiter: make(map[string]time.Time),
 		db:          db,
 		config:      config,
+        clientRooms: make(map[string]string),
 	}
 
 	// Load existing rooms from database
@@ -148,6 +151,7 @@ func (s *Server) loadRoomsFromDatabase() error {
 			HostID:       dbRoom.HostID,
 			VideoState:   videoState,
 			ChatHistory:  chatHistory,
+			Clients:      []string{},
 		}
 
 		s.rooms[room.ID] = room
@@ -234,6 +238,7 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		HostID:       "",
 		VideoState:   &database.VideoState{},
 		ChatHistory:  []*database.ChatMessage{},
+		Clients:      []string{},
 	}
 
 	// Create room in database
@@ -416,10 +421,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	clientID := generateClientID()
-	s.mutex.Lock()
-	s.clients[clientID] = conn
-	s.mutex.Unlock()
+    clientID := generateClientID()
+    // Track client room from query
+    roomID := r.URL.Query().Get("room")
+    if roomID == "" {
+        roomID = "_"
+    }
+    s.mutex.Lock()
+    s.clients[clientID] = conn
+    s.clientRooms[clientID] = roomID
+    s.mutex.Unlock()
 
 	log.Printf("WebSocket client connected: %s", clientID)
 
@@ -440,13 +451,28 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cleanup
-	s.mutex.Lock()
-	delete(s.clients, clientID)
-	s.mutex.Unlock()
+    s.mutex.Lock()
+    delete(s.clients, clientID)
+    roomID = s.clientRooms[clientID]
+    delete(s.clientRooms, clientID)
+    
+    // Remove client from room
+    if roomID != "" && roomID != "_" {
+        if room, exists := s.rooms[roomID]; exists {
+            for i, cid := range room.Clients {
+                if cid == clientID {
+                    room.Clients = append(room.Clients[:i], room.Clients[i+1:]...)
+                    break
+                }
+            }
+        }
+    }
+    s.mutex.Unlock()
 	log.Printf("WebSocket client disconnected: %s", clientID)
 }
 
 func (s *Server) handleWebSocketMessage(clientID string, msg WebSocketMessage) {
+	log.Printf("Received WebSocket message from %s: %s", clientID, msg.Type)
 	switch msg.Type {
 	case "join-room":
 		s.handleJoinRoomWS(clientID, msg.Data)
@@ -460,6 +486,10 @@ func (s *Server) handleWebSocketMessage(clientID string, msg WebSocketMessage) {
 		s.handleWebRTCAnswer(clientID, msg.Data)
 	case "webrtc-ice-candidate":
 		s.handleWebRTCIceCandidate(clientID, msg.Data)
+	case "webrtc-call-started":
+		s.handleWebRTCCallStarted(clientID, msg.Data)
+	case "webrtc-call-ended":
+		s.handleWebRTCCallEnded(clientID, msg.Data)
 	case "ping":
 		s.handlePing(clientID)
 	default:
@@ -488,7 +518,7 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 		return
 	}
 
-	// Find participant
+	// Find or create participant
 	var participant *database.Participant
 	for _, p := range room.Participants {
 		if p.Username == username && p.IsActive {
@@ -498,12 +528,43 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 	}
 
 	if participant == nil {
-		return
+		// Create new participant
+		participant = &database.Participant{
+			ID:        generateClientID(),
+			RoomID:    roomID,
+			Username:  username,
+			IsActive:  true,
+			JoinedAt:  time.Now(),
+			LastSeen:  time.Now(),
+		}
+
+		// Add to database
+		if err := s.db.AddParticipant(participant); err != nil {
+			log.Printf("Failed to add participant to database: %v", err)
+			return
+		}
+
+		// Add to room
+		s.mutex.Lock()
+		room.Participants = append(room.Participants, participant)
+		// Set first participant as host
+		if len(room.Participants) == 1 {
+			room.HostID = participant.ID
+		}
+		s.mutex.Unlock()
+
+		// Update room in database
+		s.updateRoomInDatabase(room)
 	}
 
 	// Update last seen
 	participant.LastSeen = time.Now()
 	s.db.UpdateParticipantLastSeen(participant.ID)
+
+	// Update client room mapping
+	s.mutex.Lock()
+	s.clientRooms[clientID] = roomID
+	s.mutex.Unlock()
 
 	// Send room state
 	response := WebSocketMessage{
@@ -518,13 +579,32 @@ func (s *Server) handleJoinRoomWS(clientID string, data interface{}) {
 
 	s.sendToClient(clientID, response)
 
-	// Broadcast participant joined
-	s.broadcastToRoom(roomID, WebSocketMessage{
-		Type: "participant-joined",
-		Data: map[string]interface{}{
-			"participant": participant,
-		},
-	})
+	// Only broadcast participant joined if this is a new connection
+	// Check if this participant was already connected
+	s.mutex.RLock()
+	wasConnected := false
+	for _, cid := range room.Clients {
+		if cid == clientID {
+			wasConnected = true
+			break
+		}
+	}
+	s.mutex.RUnlock()
+
+	if !wasConnected {
+		// Add client to room
+		s.mutex.Lock()
+		room.Clients = append(room.Clients, clientID)
+		s.mutex.Unlock()
+
+		// Broadcast participant joined only for new connections
+		s.broadcastToRoom(roomID, WebSocketMessage{
+			Type: "participant-joined",
+			Data: map[string]interface{}{
+				"participant": participant,
+			},
+		})
+	}
 }
 
 func (s *Server) handleVideoSync(clientID string, data interface{}) {
@@ -637,11 +717,10 @@ func (s *Server) handleWebRTCOffer(clientID string, data interface{}) {
 		return
 	}
 
-	to, _ := dataMap["to"].(string)
 	roomID, _ := dataMap["roomId"].(string)
-	offer, _ := dataMap["offer"].(string)
+    offer := dataMap["offer"]
 
-	if to == "" || roomID == "" || offer == "" {
+    if roomID == "" || offer == nil {
 		return
 	}
 
@@ -650,15 +729,15 @@ func (s *Server) handleWebRTCOffer(clientID string, data interface{}) {
 		return
 	}
 
-	// Forward to target client
-	s.sendToClient(to, WebSocketMessage{
-		Type: "webrtc-offer",
-		Data: map[string]interface{}{
-			"from":  clientID,
-			"offer": offer,
-			"roomId": roomID,
-		},
-	})
+    // Broadcast offer to all clients in the room
+    s.broadcastToRoom(roomID, WebSocketMessage{
+        Type: "webrtc-offer",
+        Data: map[string]interface{}{
+            "from":  clientID,
+            "offer": offer,
+            "roomId": roomID,
+        },
+    })
 }
 
 func (s *Server) handleWebRTCAnswer(clientID string, data interface{}) {
@@ -667,11 +746,10 @@ func (s *Server) handleWebRTCAnswer(clientID string, data interface{}) {
 		return
 	}
 
-	to, _ := dataMap["to"].(string)
 	roomID, _ := dataMap["roomId"].(string)
-	answer, _ := dataMap["answer"].(string)
+    answer := dataMap["answer"]
 
-	if to == "" || roomID == "" || answer == "" {
+    if roomID == "" || answer == nil {
 		return
 	}
 
@@ -680,15 +758,15 @@ func (s *Server) handleWebRTCAnswer(clientID string, data interface{}) {
 		return
 	}
 
-	// Forward to target client
-	s.sendToClient(to, WebSocketMessage{
-		Type: "webrtc-answer",
-		Data: map[string]interface{}{
-			"from":   clientID,
-			"answer": answer,
-			"roomId": roomID,
-		},
-	})
+    // Broadcast answer to all clients in the room
+    s.broadcastToRoom(roomID, WebSocketMessage{
+        Type: "webrtc-answer",
+        Data: map[string]interface{}{
+            "from":   clientID,
+            "answer": answer,
+            "roomId": roomID,
+        },
+    })
 }
 
 func (s *Server) handleWebRTCIceCandidate(clientID string, data interface{}) {
@@ -697,11 +775,10 @@ func (s *Server) handleWebRTCIceCandidate(clientID string, data interface{}) {
 		return
 	}
 
-	to, _ := dataMap["to"].(string)
 	roomID, _ := dataMap["roomId"].(string)
-	iceCandidate, _ := dataMap["iceCandidate"].(string)
+    iceCandidate := dataMap["iceCandidate"]
 
-	if to == "" || roomID == "" || iceCandidate == "" {
+    if roomID == "" || iceCandidate == nil {
 		return
 	}
 
@@ -710,15 +787,15 @@ func (s *Server) handleWebRTCIceCandidate(clientID string, data interface{}) {
 		return
 	}
 
-	// Forward to target client
-	s.sendToClient(to, WebSocketMessage{
-		Type: "webrtc-ice-candidate",
-		Data: map[string]interface{}{
-			"from":         clientID,
-			"iceCandidate": iceCandidate,
-			"roomId":       roomID,
-		},
-	})
+    // Broadcast candidate to all clients in the room
+    s.broadcastToRoom(roomID, WebSocketMessage{
+        Type: "webrtc-ice-candidate",
+        Data: map[string]interface{}{
+            "from":         clientID,
+            "iceCandidate": iceCandidate,
+            "roomId":       roomID,
+        },
+    })
 }
 
 func (s *Server) handlePing(clientID string) {
@@ -765,32 +842,27 @@ func (s *Server) sendToClient(clientID string, msg WebSocketMessage) {
 }
 
 func (s *Server) broadcastToRoom(roomID string, msg WebSocketMessage) {
-	s.mutex.RLock()
-	room, exists := s.rooms[roomID]
-	if !exists {
-		s.mutex.RUnlock()
-		return
-	}
-
-	// Get all active participants
-	var activeParticipants []*database.Participant
-	for _, participant := range room.Participants {
-		if participant.IsActive {
-			activeParticipants = append(activeParticipants, participant)
-		}
-	}
-	s.mutex.RUnlock()
-
-	// Send to all clients (simplified - in production, you'd track client-to-participant mapping)
-	s.mutex.RLock()
-	for clientID, conn := range s.clients {
-		if err := conn.WriteJSON(msg); err != nil {
-			log.Printf("Failed to broadcast to client %s: %v", clientID, err)
-			// Remove disconnected client
-			delete(s.clients, clientID)
-		}
-	}
-	s.mutex.RUnlock()
+    s.mutex.RLock()
+    // Ensure room exists
+    if _, exists := s.rooms[roomID]; !exists {
+        s.mutex.RUnlock()
+        log.Printf("Room %s not found for broadcast", roomID)
+        return
+    }
+    log.Printf("Broadcasting %s to room %s", msg.Type, roomID)
+    // Broadcast only to clients in the same room
+    for clientID, conn := range s.clients {
+        if s.clientRooms[clientID] != roomID {
+            continue
+        }
+        if err := conn.WriteJSON(msg); err != nil {
+            log.Printf("Failed to broadcast to client %s: %v", clientID, err)
+            // Removal is handled on disconnect paths
+        } else {
+            log.Printf("Sent %s to client %s", msg.Type, clientID)
+        }
+    }
+    s.mutex.RUnlock()
 }
 
 func (s *Server) startPingPong(ctx context.Context, clientID string, conn *websocket.Conn) {
@@ -887,6 +959,54 @@ func getBool(data map[string]interface{}, key string) bool {
 		return val
 	}
 	return false
+}
+
+func (s *Server) handleWebRTCCallStarted(clientID string, data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	username, _ := dataMap["username"].(string)
+	media, _ := dataMap["media"].(string)
+
+	if roomID == "" || username == "" {
+		return
+	}
+
+	// Broadcast to room that someone started sharing
+	s.broadcastToRoom(roomID, WebSocketMessage{
+		Type: "webrtc-call-started",
+		Data: map[string]interface{}{
+			"username": username,
+			"media":    media,
+			"roomId":   roomID,
+		},
+	})
+}
+
+func (s *Server) handleWebRTCCallEnded(clientID string, data interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	roomID, _ := dataMap["roomId"].(string)
+	username, _ := dataMap["username"].(string)
+
+	if roomID == "" || username == "" {
+		return
+	}
+
+	// Broadcast to room that someone stopped sharing
+	s.broadcastToRoom(roomID, WebSocketMessage{
+		Type: "webrtc-call-ended",
+		Data: map[string]interface{}{
+			"username": username,
+			"roomId":   roomID,
+		},
+	})
 }
 
 func main() {

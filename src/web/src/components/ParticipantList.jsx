@@ -1,65 +1,40 @@
 import React, { useState, useEffect } from 'react'
+import { websocketManager } from '../utils/websocketManager'
 
 const ParticipantList = ({ participants, roomId, username }) => {
   const [ws, setWs] = useState(null)
   const [participantList, setParticipantList] = useState(participants || [])
 
   useEffect(() => {
-    // Initialize WebSocket connection for participant updates
-    const connectWebSocket = () => {
-      const wsUrl = `ws://localhost:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
-      const websocket = new WebSocket(wsUrl)
-
-      websocket.onopen = () => {
-        console.log('Participant WebSocket connected')
+    // Listen to shared WebSocket messages
+    const handleMessage = (event) => {
+      const data = event.detail
+      switch (data.type) {
+        case 'participant-joined':
+          setParticipantList(prev => {
+            const newParticipant = data.data.participant
+            if (!newParticipant) return prev
+            if (!prev.find(p => p.id === newParticipant.id)) {
+              return [...prev, newParticipant]
+            }
+            return prev
+          })
+          break
+        case 'participant-left':
+          setParticipantList(prev => 
+            prev.filter(p => p.id !== data.data.participantId)
+          )
+          break
+        case 'room-joined':
+          setParticipantList(data.data.participants || [])
+          break
       }
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          switch (data.type) {
-            case 'participant-joined':
-              setParticipantList(prev => {
-                const newParticipant = data.data.participant
-                if (!prev.find(p => p.id === newParticipant.id)) {
-                  return [...prev, newParticipant]
-                }
-                return prev
-              })
-              break
-            case 'participant-left':
-              setParticipantList(prev => 
-                prev.filter(p => p.id !== data.data.participantId)
-              )
-              break
-            case 'room-joined':
-              setParticipantList(data.data.participants || [])
-              break
-          }
-        } catch (err) {
-          console.error('Error parsing participant message:', err)
-        }
-      }
-
-      websocket.onclose = () => {
-        console.log('Participant WebSocket disconnected')
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000)
-      }
-
-      websocket.onerror = (error) => {
-        console.error('Participant WebSocket error:', error)
-      }
-
-      setWs(websocket)
     }
 
-    connectWebSocket()
+    window.addEventListener('cinewatchbuddy-message', handleMessage)
 
     return () => {
-      if (ws) {
-        ws.close()
-      }
+      window.removeEventListener('cinewatchbuddy-message', handleMessage)
     }
   }, [roomId, username])
 

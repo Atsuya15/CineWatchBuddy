@@ -155,6 +155,18 @@ class CineBuddyContentScript {
         else if (hostname.includes('amazon.com')) {
             this.detectAmazonPrimeVideos();
         }
+        // Generic site example: watch32.sx or any site with HTML5 video
+        else if (hostname.includes('watch32.sx')) {
+            // Generic detection already covers <video> tags; ensure we attach listeners
+            const genericVideos = document.querySelectorAll('video');
+            genericVideos.forEach(video => {
+                if (!this.videoElements.has(video)) {
+                    this.videoElements.add(video);
+                    this.setupVideoListeners(video);
+                    this.addVideoIndicator(video);
+                }
+            });
+        }
     }
 
     detectNetflixVideos() {

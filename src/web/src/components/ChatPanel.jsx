@@ -16,91 +16,86 @@ const ChatPanel = ({ roomId, username }) => {
   }, [messages])
 
   useEffect(() => {
-    // Initialize WebSocket connection for chat
-    const connectWebSocket = () => {
-      const wsUrl = `ws://localhost:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
-      const websocket = new WebSocket(wsUrl)
-
-      websocket.onopen = () => {
-        console.log('Chat WebSocket connected')
-      }
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          switch (data.type) {
-            case 'chat-message':
-              setMessages(prev => [...prev, data.data])
-              break
-            case 'room-joined':
-              // Load chat history when joining room
-              if (data.data && data.data.chatHistory) {
-                setMessages(data.data.chatHistory.map(msg => ({
-                  id: msg.id,
-                  username: msg.username,
-                  content: msg.content,
-                  timestamp: msg.timestamp,
-                  type: msg.type || 'message'
-                })))
+    // Use shared WebSocket connection from parent
+    const handleMessage = (event) => {
+      try {
+        const data = event.detail
+        console.log('💬 ChatPanel received message:', data)
+        switch (data.type) {
+          case 'chat-message':
+            console.log('💬 Processing chat message:', data.data)
+            setMessages(prev => {
+              // Check if message already exists to prevent duplicates
+              const exists = prev.some(msg => msg.id === data.data.id)
+              if (exists) {
+                console.log('💬 Message already exists, skipping')
+                return prev
               }
-              break
-            case 'participant-joined':
-              // Add system message for new participant
-              if (data.data && data.data.participant) {
-                const systemMessage = {
-                  id: `system-${Date.now()}`,
-                  username: 'System',
-                  content: `${data.data.participant.username} joined the room`,
-                  timestamp: new Date().toISOString(),
-                  type: 'system'
-                }
-                setMessages(prev => [...prev, systemMessage])
+              console.log('💬 Adding new message to chat')
+              return [...prev, data.data]
+            })
+            break
+          case 'room-joined':
+            // Load chat history when joining room
+            if (data.data && data.data.chatHistory) {
+              setMessages(data.data.chatHistory.map(msg => ({
+                id: msg.id,
+                username: msg.username,
+                content: msg.content,
+                timestamp: msg.timestamp,
+                type: msg.type || 'message'
+              })))
+            }
+            break
+          case 'participant-joined':
+            // Add system message for new participant (only once)
+            if (data.data && data.data.participant) {
+              const systemMessage = {
+                id: `system-${data.data.participant.id}-joined`,
+                username: 'System',
+                content: `${data.data.participant.username} joined the room`,
+                timestamp: new Date().toISOString(),
+                type: 'system'
               }
-              break
-            case 'participant-left':
-              // Add system message for leaving participant
-              if (data.data && data.data.participant) {
-                const systemMessage = {
-                  id: `system-${Date.now()}`,
-                  username: 'System',
-                  content: `${data.data.participant.username} left the room`,
-                  timestamp: new Date().toISOString(),
-                  type: 'system'
-                }
-                setMessages(prev => [...prev, systemMessage])
+              setMessages(prev => {
+                const exists = prev.some(msg => msg.id === systemMessage.id)
+                return exists ? prev : [...prev, systemMessage]
+              })
+            }
+            break
+          case 'participant-left':
+            // Add system message for leaving participant (only once)
+            if (data.data && data.data.participant) {
+              const systemMessage = {
+                id: `system-${data.data.participant.id}-left`,
+                username: 'System',
+                content: `${data.data.participant.username} left the room`,
+                timestamp: new Date().toISOString(),
+                type: 'system'
               }
-              break
-          }
-        } catch (err) {
-          console.error('Error parsing chat message:', err)
+              setMessages(prev => {
+                const exists = prev.some(msg => msg.id === systemMessage.id)
+                return exists ? prev : [...prev, systemMessage]
+              })
+            }
+            break
         }
+      } catch (err) {
+        console.error('Error parsing chat message:', err)
       }
-
-      websocket.onclose = () => {
-        console.log('Chat WebSocket disconnected')
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000)
-      }
-
-      websocket.onerror = (error) => {
-        console.error('Chat WebSocket error:', error)
-      }
-
-      setWs(websocket)
     }
 
-    connectWebSocket()
+    // Listen to window events for shared WebSocket
+    window.addEventListener('cinewatchbuddy-message', handleMessage)
 
     return () => {
-      if (ws) {
-        ws.close()
-      }
+      window.removeEventListener('cinewatchbuddy-message', handleMessage)
     }
   }, [roomId, username])
 
   const sendMessage = (e) => {
     e.preventDefault()
-    if (!newMessage.trim() || !ws || ws.readyState !== WebSocket.OPEN) return
+    if (!newMessage.trim()) return
 
     const message = {
       id: Date.now().toString(),
@@ -111,14 +106,18 @@ const ChatPanel = ({ roomId, username }) => {
       type: 'message'
     }
 
-    // Send message via WebSocket
-    ws.send(JSON.stringify({
-      type: 'chat-message',
-      data: message
+    console.log('💬 Sending chat message:', message)
+
+    // Send message via shared WebSocket
+    window.dispatchEvent(new CustomEvent('cinewatchbuddy-send', {
+      detail: {
+        type: 'chat-message',
+        data: message
+      }
     }))
 
-    // Add to local messages immediately for better UX
-    setMessages(prev => [...prev, message])
+    // Don't add to local messages - let the WebSocket response handle it
+    // This prevents duplicate messages
     setNewMessage('')
   }
 

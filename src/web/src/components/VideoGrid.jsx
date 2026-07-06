@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { websocketManager } from '../utils/websocketManager'
 
 const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
   const [isCallActive, setIsCallActive] = useState(false)
+  const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [participants, setParticipants] = useState([])
   const [localStream, setLocalStream] = useState(null)
   const [remoteStreams, setRemoteStreams] = useState(new Map())
@@ -14,43 +16,15 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
   const remoteVideoRefs = useRef(new Map())
 
   useEffect(() => {
-    // Initialize WebSocket connection for WebRTC signaling
-    const connectWebSocket = () => {
-      const wsUrl = `ws://localhost:8080/ws?room=${roomId}&user=${encodeURIComponent(username)}`
-      const websocket = new WebSocket(wsUrl)
-
-      websocket.onopen = () => {
-        console.log('WebRTC WebSocket connected')
-      }
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          handleWebSocketMessage(data)
-        } catch (err) {
-          console.error('Error parsing WebRTC message:', err)
-        }
-      }
-
-      websocket.onclose = () => {
-        console.log('WebRTC WebSocket disconnected')
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000)
-      }
-
-      websocket.onerror = (error) => {
-        console.error('WebRTC WebSocket error:', error)
-      }
-
-      setWs(websocket)
+    // Listen to shared WebSocket messages
+    const handleMessage = (event) => {
+      handleWebSocketMessage(event.detail)
     }
 
-    connectWebSocket()
+    window.addEventListener('cinewatchbuddy-message', handleMessage)
 
     return () => {
-      if (ws) {
-        ws.close()
-      }
+      window.removeEventListener('cinewatchbuddy-message', handleMessage)
       // Cleanup peer connections
       peerConnections.current.forEach(pc => pc.close())
     }
@@ -75,7 +49,10 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
         break
       case 'participant-joined':
         if (data.data && data.data.participant) {
-          setParticipants(prev => [...prev, data.data.participant])
+          setParticipants(prev => {
+            const exists = prev.some(p => p.id === data.data.participant.id)
+            return exists ? prev : [...prev, data.data.participant]
+          })
         }
         break
       case 'participant-left':
@@ -99,27 +76,30 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
 
   const startCall = async () => {
     try {
+      console.log('Starting camera call for user:', username, 'in room:', roomId)
+      
       // Get user media
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true
       })
       
+      console.log('Got user media stream:', stream)
+      
       setLocalStream(stream)
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
+        console.log('Set local video source')
       }
 
       // Notify other participants
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'webrtc-call-started',
-          data: {
-            username,
-            roomId
-          }
-        }))
-      }
+      const success = websocketManager.send('webrtc-call-started', {
+        username,
+        roomId,
+        media: 'camera'
+      })
+      
+      console.log('Sent webrtc-call-started message, success:', success)
 
       setIsCallActive(true)
       onCallStarted && onCallStarted()
@@ -129,12 +109,36 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
     }
   }
 
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+      setLocalStream(stream)
+      setIsScreenSharing(true)
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream
+      }
+
+      websocketManager.send('webrtc-call-started', {
+        username,
+        roomId,
+        media: 'screen'
+      })
+
+      setIsCallActive(true)
+      onCallStarted && onCallStarted()
+    } catch (error) {
+      console.error('Error starting screen share:', error)
+      alert('Could not start screen sharing. Please check permissions.')
+    }
+  }
+
   const endCall = () => {
     // Stop local stream
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop())
       setLocalStream(null)
     }
+    setIsScreenSharing(false)
 
     // Close all peer connections
     peerConnections.current.forEach(pc => pc.close())
@@ -144,15 +148,10 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
     setRemoteStreams(new Map())
 
     // Notify other participants
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'webrtc-call-ended',
-        data: {
-          username,
-          roomId
-        }
-      }))
-    }
+    websocketManager.send('webrtc-call-ended', {
+      username,
+      roomId
+    })
 
     setIsCallActive(false)
     onCallEnded && onCallEnded()
@@ -216,16 +215,13 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
 
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
-      if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'webrtc-ice-candidate',
-          data: {
-            to: participantId,
-            from: username,
-            candidate: event.candidate,
-            roomId
-          }
-        }))
+      if (event.candidate) {
+        websocketManager.send('webrtc-ice-candidate', {
+          to: participantId,
+          from: username,
+          candidate: event.candidate,
+          roomId
+        })
       }
     }
 
@@ -255,17 +251,12 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
 
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'webrtc-answer',
-          data: {
-            to: from,
-            from: username,
-            answer: answer,
-            roomId
-          }
-        }))
-      }
+      websocketManager.send('webrtc-answer', {
+        to: from,
+        from: username,
+        answer: answer,
+        roomId
+      })
     } catch (error) {
       console.error('Error handling WebRTC offer:', error)
     }
@@ -302,27 +293,44 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
   }
 
   const handleCallStarted = (data) => {
-    if (data.username !== username && isCallActive) {
-      // Another participant started a call, create peer connection
+    console.log('Received webrtc-call-started:', data)
+    if (data.username !== username) {
+      console.log('Another participant started sharing:', data.username)
+      // Another participant started publishing media; create peer connection to subscribe
       const participantId = data.username
       const pc = createPeerConnection(participantId)
       peerConnections.current.set(participantId, pc)
+
+      // Update participant status
+      setParticipants(prev => {
+        const updated = prev.map(p => 
+          p.username === data.username 
+            ? { ...p, isSharing: true, mediaType: data.media || 'camera' }
+            : p
+        )
+        // If participant not in list, add them
+        if (!prev.some(p => p.username === data.username)) {
+          updated.push({
+            id: data.username,
+            username: data.username,
+            isSharing: true,
+            mediaType: data.media || 'camera'
+          })
+        }
+        return updated
+      })
 
       // Create offer
       pc.createOffer().then(offer => {
         pc.setLocalDescription(offer)
         
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'webrtc-offer',
-            data: {
-              to: participantId,
-              from: username,
-              offer: offer,
-              roomId
-            }
-          }))
-        }
+        const success = websocketManager.send('webrtc-offer', {
+          to: participantId,
+          from: username,
+          offer: offer,
+          roomId
+        })
+        console.log('Sent webrtc-offer, success:', success)
       }).catch(console.error)
     }
   }
@@ -331,6 +339,17 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
     if (data.username !== username) {
       // Another participant ended their call
       const participantId = data.username
+
+      // Update participant status
+      setParticipants(prev => {
+        const updated = prev.map(p => 
+          p.username === data.username 
+            ? { ...p, isSharing: false, mediaType: null }
+            : p
+        )
+        return updated
+      })
+
       if (peerConnections.current.has(participantId)) {
         peerConnections.current.get(participantId).close()
         peerConnections.current.delete(participantId)
@@ -348,44 +367,41 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
   return (
     <div className="bg-gray-800 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Video Call</h3>
+        <h3 className="text-lg font-semibold">Live Video</h3>
         <div className="flex gap-2">
-          {!isCallActive ? (
-            <button
-              onClick={startCall}
-              className="btn btn-primary"
-            >
-              📹 Start Call
-            </button>
-          ) : (
-            <button
-              onClick={endCall}
-              className="btn btn-secondary"
-            >
-              📞 End Call
-            </button>
+          {!isCallActive && (
+            <>
+              <button onClick={startCall} className="btn btn-primary">📹 Share Camera</button>
+              <button onClick={startScreenShare} className="btn btn-secondary">🖥️ Share Screen</button>
+            </>
+          )}
+          {isCallActive && (
+            <button onClick={endCall} className="btn btn-secondary">⏹️ Stop</button>
           )}
         </div>
       </div>
 
-      {isCallActive && (
+      {/* Show all participants who are sharing */}
+      {(isCallActive || participants.some(p => p.isSharing)) && (
         <div className="space-y-4">
           {/* Video Grid */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Local Video */}
-            <div className="relative">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                className="w-full h-32 bg-black rounded-lg"
-              />
-              <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 text-white px-2 py-1 rounded">
-                You {isMuted ? '🔇' : '🎤'} {isVideoOff ? '📷' : '📹'}
+            {/* Local Video - only show if we're sharing */}
+            {isCallActive && (
+              <div className="relative">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  className="w-full h-32 bg-black rounded-lg"
+                />
+                <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 text-white px-2 py-1 rounded">
+                  {isScreenSharing ? 'Your Screen' : 'You'} {isMuted ? '🔇' : '🎤'} {isVideoOff ? '📷' : '📹'}
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Remote Videos */}
+            {/* Remote Videos - show all participants who are sharing */}
             {Array.from(remoteStreams.entries()).map(([participantId, stream]) => (
               <div key={participantId} className="relative">
                 <video
@@ -398,30 +414,48 @@ const VideoGrid = ({ roomId, username, onCallStarted, onCallEnded }) => {
                 </div>
               </div>
             ))}
+
+            {/* Show participants who are sharing but we don't have their stream yet */}
+            {participants
+              .filter(p => p.isSharing && p.username !== username && !remoteStreams.has(p.username))
+              .map(participant => (
+                <div key={participant.username} className="relative">
+                  <div className="w-full h-32 bg-gray-700 rounded-lg flex items-center justify-center">
+                    <div className="text-center text-gray-400">
+                      <div className="text-2xl mb-2">📹</div>
+                      <div className="text-sm">{participant.username}</div>
+                      <div className="text-xs">Connecting...</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
           </div>
 
-          {/* Controls */}
-          <div className="flex justify-center gap-4">
-            <button
-              onClick={toggleMute}
-              className={`btn ${isMuted ? 'btn-secondary' : 'btn-primary'}`}
-            >
-              {isMuted ? '🔇 Unmute' : '🎤 Mute'}
-            </button>
-            <button
-              onClick={toggleVideo}
-              className={`btn ${isVideoOff ? 'btn-secondary' : 'btn-primary'}`}
-            >
-              {isVideoOff ? '📷 Turn On' : '📹 Turn Off'}
-            </button>
-          </div>
+          {/* Controls - only show when we're sharing */}
+          {isCallActive && (
+            <div className="flex justify-center gap-4">
+              <button
+                onClick={toggleMute}
+                className={`btn ${isMuted ? 'btn-secondary' : 'btn-primary'}`}
+              >
+                {isMuted ? '🔇 Unmute' : '🎤 Mute'}
+              </button>
+              <button
+                onClick={toggleVideo}
+                className={`btn ${isVideoOff ? 'btn-secondary' : 'btn-primary'}`}
+              >
+                {isVideoOff ? '📷 Turn On' : '📹 Turn Off'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {!isCallActive && (
+      {/* Show message when no one is sharing */}
+      {!isCallActive && !participants.some(p => p.isSharing) && (
         <div className="text-center text-gray-400 py-8">
-          <p>Click "Start Call" to begin video chat</p>
-          <p className="text-sm mt-2">All participants in the room will be able to join</p>
+          <p>Click "Share Camera" or "Share Screen" to begin</p>
+          <p className="text-sm mt-2">All participants in the room will see your video</p>
         </div>
       )}
     </div>
